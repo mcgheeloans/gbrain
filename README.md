@@ -17,7 +17,9 @@ I was setting up my [OpenClaw](https://openclaw.ai) agent and started a markdown
 
 This is what I actually use day to day. The agent runs while I sleep... literally. The dream cycle scans every conversation from the day, enriches missing entities, fixes broken citations, and consolidates memory. I wake up and the brain is smarter than when I went to sleep. OpenClaw ships this as DREAMS.md. Hermes Agent can do the same with a nightly cron job (see the [SKILLPACK](docs/GBRAIN_SKILLPACK.md#the-dream-cycle) for setup).
 
-**You don't need Postgres to start.** The knowledge model is just markdown files in a git repo. The [skills](docs/GBRAIN_SKILLPACK.md) and [schema](docs/GBRAIN_RECOMMENDED_SCHEMA.md) work with any AI agent that can read and write files. Start there.
+**You don't need a server to start.** `gbrain init` now defaults to PGLite -- embedded Postgres 17.5 running via WASM, right on your machine. No Supabase account, no Docker, no connection strings. One command and you have a full Postgres brain with pgvector, hybrid search, and all 37 operations. When your brain outgrows local (1,000+ files), `gbrain migrate --to supabase` moves everything to managed Postgres in one shot.
+
+The knowledge model is just markdown files in a git repo. The [skills](docs/GBRAIN_SKILLPACK.md) and [schema](docs/GBRAIN_RECOMMENDED_SCHEMA.md) work with any AI agent that can read and write files.
 
 I added Postgres + pgvector later because at 1,000 to 10,000 long markdown docs, `grep` stops working. You need real chunking, real retrieval, real search. GBrain is the thin CLI and MCP layer I built on top of Postgres to solve that, optimized for OpenClaw and smart agents.
 
@@ -119,9 +121,17 @@ All three should be checked. GBrain for facts about the world. Memory for agent 
 
 ## Try it: your files, searchable in 90 seconds
 
-GBrain doesn't ship with demo data. It finds YOUR markdown and makes it searchable.
+GBrain doesn't ship with demo data. It finds YOUR markdown and makes it searchable. No Supabase account or API keys required to get started.
 
-**Act 1: Discovery.** GBrain scans your machine for markdown repos.
+**Act 1: Init.** One command creates your brain. PGLite (embedded Postgres) is the default -- no server needed.
+
+```bash
+gbrain init
+# Creates ~/.gbrain/brain.db (PGLite, embedded Postgres 17.5)
+# Scans your repo. If 1000+ files, suggests: "Consider Supabase for production scale"
+```
+
+**Act 2: Discovery.** GBrain scans your machine for markdown repos.
 
 ```
 === GBrain Environment Discovery ===
@@ -135,33 +145,39 @@ GBrain doesn't ship with demo data. It finds YOUR markdown and makes it searchab
 === Discovery Complete ===
 ```
 
-**Act 2: Import.** Your files move from the repo into Supabase.
+**Act 3: Import.** Your files move into the local brain.
 
 ```bash
 gbrain import ~/git/brain/
-# Imported 342 files into Supabase (1,847 chunks). Embedding in background...
+# Imported 342 files (1,847 chunks). Embedding in background...
 
 gbrain stats
 # Pages: 342, Chunks: 1,847, Embedded: 0 (embedding...), Links: 0
 ```
 
-**Act 3: Search.** The agent picks a query from your actual content.
+**Act 4: Search.** The agent picks a query from your actual content.
 
 ```bash
-# The agent reads your corpus and picks a relevant query
+# Without OPENAI_API_KEY, keyword search still works out of the box
 gbrain query "what do we know about competitive dynamics?"
-# 3 results, scored by hybrid search (vector + keyword + RRF fusion)
+# 3 results, scored by keyword search (tsvector + ts_rank)
 
-# 30 seconds later, embeddings finish:
-gbrain stats
-# Pages: 342, Chunks: 1,847, Embedded: 1,847, Links: 0
-
-# Now semantic search is live too
+# Set OPENAI_API_KEY to enable vector search too:
+gbrain embed --stale
 gbrain query "what are our biggest risks right now?"
 # Finds pages about moats, board prep, and strategy -- by meaning, not keywords
 ```
 
 Your file count will be different. Your queries will be different. The agent picks them based on what it imported. That's the point: this is YOUR brain, not a demo.
+
+**Outgrowing local?** When your brain hits 1,000+ files or you need multi-device access, migrate to Supabase in one command:
+
+```bash
+gbrain migrate --to supabase
+# Exports all pages, chunks, embeddings, links, tags, timeline entries
+# Imports into your Supabase Postgres instance
+# Updates ~/.gbrain/config.json to use the new engine
+```
 
 **The compounding effect.** Search for Pedro. The agent pulls his page, his relationship history, his company. Next time Brex comes up in conversation, the agent already knows Pedro co-founded it, what you discussed last, and what's on your open threads. You didn't do anything — the brain already had it.
 
@@ -169,9 +185,9 @@ Your file count will be different. Your queries will be different. The agent pic
 
 ### Prerequisites
 
-**Without Postgres**, you can use the GBrain knowledge model right now: the [skills](docs/GBRAIN_SKILLPACK.md), [schema](docs/GBRAIN_RECOMMENDED_SCHEMA.md), and compiled truth + timeline pattern work with any agent that reads and writes markdown files. Add Postgres when `grep` stops being enough.
+**Zero-config start (PGLite).** `gbrain init` creates a local embedded Postgres brain. No accounts, no server, no API keys. Keyword search works immediately. Add API keys later for vector search and LLM-powered features.
 
-**With Postgres**, GBrain needs three things:
+**For production scale (Supabase).** When your brain outgrows local, `gbrain migrate --to supabase` moves everything to managed Postgres:
 
 | Dependency | What it's for | How to get it |
 |------------|--------------|---------------|
@@ -186,7 +202,7 @@ export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-The Supabase connection URL is configured during `gbrain init`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
+The Supabase connection URL is configured during `gbrain init --supabase`. The OpenAI and Anthropic SDKs read their keys from the environment automatically.
 
 Without an OpenAI key, search still works (keyword only, no vector search). Without an Anthropic key, search still works (no multi-query expansion, no LLM chunking).
 
@@ -263,7 +279,8 @@ Install globally and use gbrain from the terminal:
 
 ```bash
 bun add -g github:garrytan/gbrain
-gbrain init --supabase          # guided wizard, connects to your Postgres
+gbrain init                     # PGLite (local, no server needed)
+gbrain init --supabase          # or: guided wizard for Supabase Postgres
 gbrain import ~/git/brain/      # index your markdown
 gbrain query "what do we know about competitive dynamics?"
 ```
@@ -337,11 +354,17 @@ bun add github:garrytan/gbrain
 ```
 
 ```typescript
-import { PostgresEngine } from 'gbrain';
+import { createEngine } from 'gbrain';
 
-const engine = new PostgresEngine();
-await engine.connect({ database_url: process.env.DATABASE_URL });
+// PGLite (local, no server)
+const engine = createEngine('pglite');
+await engine.connect({ database_path: '~/.gbrain/brain.db' });
 await engine.initSchema();
+
+// Or Postgres (Supabase / self-hosted)
+// const engine = createEngine('postgres');
+// await engine.connect({ database_url: process.env.DATABASE_URL });
+// await engine.initSchema();
 
 // Search
 const results = await engine.searchKeyword('startup growth');
@@ -358,9 +381,9 @@ await engine.putPage('concepts/superlinear-returns', {
 });
 ```
 
-The `BrainEngine` interface is pluggable. See `docs/ENGINES.md` for how to add backends.
+The `BrainEngine` interface is pluggable. `createEngine()` accepts `'pglite'` or `'postgres'`. See `docs/ENGINES.md` for details.
 
-All paths require a Postgres database with pgvector. Supabase Pro ($25/mo) is the recommended zero-ops option.
+PGLite (default) requires no external database. For production scale (7K+ pages, multi-device, remote MCP), use Supabase Pro ($25/mo).
 
 ## Upgrade
 
@@ -384,7 +407,10 @@ After upgrading, run `gbrain init` again to apply any schema migrations (idempot
 After installing via CLI or library path, run the setup wizard:
 
 ```bash
-# Guided wizard: auto-provisions Supabase or accepts a connection URL
+# Default: PGLite (local embedded Postgres, no server needed)
+gbrain init
+
+# Supabase: guided wizard for managed Postgres
 gbrain init --supabase
 
 # Or connect to any Postgres with pgvector
@@ -392,10 +418,11 @@ gbrain init --url postgresql://user:pass@host:5432/dbname
 ```
 
 The init wizard:
-1. Checks for Supabase CLI, offers auto-provisioning
-2. Falls back to manual connection URL if CLI isn't available
-3. Runs the full schema migration (tables, indexes, triggers, extensions)
-4. Verifies the connection and confirms the database is ready for import
+1. Defaults to PGLite (embedded Postgres 17.5 via WASM) -- no accounts or server required
+2. Scans repo size; suggests Supabase if 1,000+ files detected
+3. With `--supabase`: checks for Supabase CLI, offers auto-provisioning
+4. Runs the full schema migration (tables, indexes, triggers, extensions)
+5. Verifies the connection and confirms the database is ready for import
 
 Config is saved to `~/.gbrain/config.json` with 0600 permissions.
 
@@ -590,7 +617,8 @@ Three strategies, dispatched by content type:
 
 ```
 SETUP
-  gbrain init [--supabase|--url <conn>]     Create brain (guided wizard)
+  gbrain init [--supabase|--url <conn>]     Create brain (PGLite default, or Supabase)
+  gbrain migrate --to supabase|pglite       Migrate between engines (bidirectional)
   gbrain upgrade                            Self-update
 
 PAGES
@@ -675,17 +703,24 @@ CLI / MCP Server
       BrainEngine interface
        (pluggable backend)
               |
+      engine-factory.ts
+       (dynamic imports)
+              |
      +--------+--------+
      |                  |
-PostgresEngine     SQLiteEngine
-  (ships v0)       (designed, community PRs welcome)
-     |
-Supabase Pro ($25/mo)
-  Postgres + pgvector + pg_trgm
-  connection pooling via Supavisor
+PGLiteEngine       PostgresEngine
+  (ships v0.7)       (ships v0)
+     |                  |
+~/.gbrain/brain.db  Supabase Pro ($25/mo)
+  embedded PG 17.5    Postgres + pgvector + pg_trgm
+  via @electric-sql    connection pooling via Supavisor
+  /pglite
+
+     gbrain migrate --to supabase/pglite
+         (bidirectional migration)
 ```
 
-Embedding, chunking, and search fusion are engine-agnostic. Only raw keyword search (`searchKeyword`) and raw vector search (`searchVector`) are engine-specific. RRF fusion, multi-query expansion, and 4-layer dedup run above the engine on `SearchResult[]` arrays.
+Embedding, chunking, and search fusion are engine-agnostic. Only raw keyword search (`searchKeyword`) and raw vector search (`searchVector`) are engine-specific. RRF fusion, multi-query expansion, and 4-layer dedup run above the engine on `SearchResult[]` arrays. Both engines use the same SQL (PGLite runs real Postgres, not a separate dialect).
 
 ## Storage estimates
 
@@ -710,8 +745,8 @@ Initial embedding cost: ~$4-5 for 7,500 pages via OpenAI text-embedding-3-large.
 - **[GBRAIN_SKILLPACK.md](docs/GBRAIN_SKILLPACK.md)** -- **Start here for agents.** Reference architecture for production agents: brain-agent loop, entity detection, enrichment pipeline, meeting ingestion, cron schedule
 - [GBRAIN_RECOMMENDED_SCHEMA.md](docs/GBRAIN_RECOMMENDED_SCHEMA.md) -- The recommended brain schema: MECE directories, compiled truth + timeline, enrichment pipelines, resolver decision tree
 - [GBRAIN_V0.md](docs/GBRAIN_V0.md) -- Full product spec, all architecture decisions, every option considered
-- [ENGINES.md](docs/ENGINES.md) -- Pluggable engine interface, capability matrix, how to add backends
-- [SQLITE_ENGINE.md](docs/SQLITE_ENGINE.md) -- Complete SQLite engine plan with schema, FTS5, vector search options
+- [ENGINES.md](docs/ENGINES.md) -- Pluggable engine interface: PGLite (default) + Postgres, capability matrix, migration, how to add backends
+- [SQLITE_ENGINE.md](docs/SQLITE_ENGINE.md) -- Historical SQLite engine plan (superseded by PGLite in v0.7)
 - [GBRAIN_VERIFY.md](docs/GBRAIN_VERIFY.md) -- Installation verification runbook: schema, live sync, embeddings, brain-first lookup
 
 ## Contributing
@@ -722,10 +757,10 @@ against real Postgres+pgvector: `docker compose -f docker-compose.test.yml up -d
 
 Welcome PRs for:
 
-- SQLite engine implementation
 - New enrichment API integrations
 - Performance optimizations
 - Docker Compose for self-hosted Postgres
+- Additional engine backends (DuckDB, Turso, etc.)
 
 ## License
 

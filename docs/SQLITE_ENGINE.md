@@ -1,6 +1,16 @@
 # SQLite Engine Design
 
-## Status: Designed, not built. Community PRs welcome.
+## Status: Superseded by PGLite (v0.7.0)
+
+PGLite (embedded Postgres 17.5 via WASM) uses the same SQL as Postgres, eliminating
+the need for a separate SQLite dialect with FTS5, sqlite-vss, and query translation.
+See `docs/ENGINES.md` for the PGLiteEngine documentation.
+
+The design below is preserved for historical reference.
+
+---
+
+## Original status: Designed, not built.
 
 The pluggable engine interface (`docs/ENGINES.md`) means anyone can add a SQLite backend without touching the CLI, MCP server, or skills. This document is the full plan.
 
@@ -376,9 +386,7 @@ That's it. One file for the brain. One file for config.
 
 ## Migration between engines
 
-Future work: `gbrain migrate --from postgres --to sqlite` (and vice versa). The engine interface makes this straightforward... export all data via one engine's methods, import via the other's. The data model is the same, only the storage format changes.
-
-This is not built yet. For now, `gbrain export` to markdown and `gbrain import` into the other engine achieves the same result (with re-chunking and re-embedding).
+Now shipped in v0.7: `gbrain migrate --to supabase` and `gbrain migrate --to pglite` provide bidirectional migration between PGLite and Postgres. The original SQLite migration plan below is no longer needed since PGLite uses the same data format as Postgres.
 
 ## Contributing
 
