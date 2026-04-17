@@ -240,8 +240,18 @@ const put_page: Operation = {
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
     // transaction). Runs even on status='skipped' so reconciliation catches drift
     // between the page text and the links table. Failures are non-blocking.
-    let autoLinks: { created: number; removed: number; errors: number } | { error: string } | undefined;
-    if (result.parsedPage) {
+    //
+    // SECURITY: skipped for remote (MCP) callers. Auto-link's bare-slug regex
+    // matches `people/X` etc. anywhere in page text, including code fences,
+    // quoted strings, and prompt-injected content. An untrusted page can plant
+    // arbitrary outbound links by including `see meetings/board-q1` in its body.
+    // Combined with the backlink boost in hybridSearch, attacker-placed targets
+    // would surface higher in search. Local CLI users (ctx.remote=false) opt
+    // into this behavior; MCP/remote writes do not.
+    let autoLinks: { created: number; removed: number; errors: number } | { error: string } | { skipped: 'remote' } | undefined;
+    if (ctx.remote === true) {
+      autoLinks = { skipped: 'remote' };
+    } else if (result.parsedPage) {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
         if (enabled) {
@@ -285,37 +295,43 @@ async function runAutoLink(
   const allSlugs = await engine.getAllSlugs();
   const valid = candidates.filter(c => allSlugs.has(c.targetSlug));
 
-  // Reconciliation: load existing outgoing links, diff with desired set.
-  const existing = await engine.getLinks(slug);
-  const desiredKeys = new Set(valid.map(c => `${c.targetSlug}\u0000${c.linkType}`));
-  const existingKeys = new Set(existing.map(l => `${l.to_slug}\u0000${l.link_type}`));
+  // Run getLinks + addLink/removeLink loops inside a single transaction so that
+  // concurrent put_page calls on the same slug can't race the reconciliation:
+  // without this, two simultaneous writes both read stale `existingKeys` and
+  // re-create links the other side just removed (lost-update). The transaction
+  // serializes via row-level locks on `links` rows touched by addLink/removeLink.
+  return await engine.transaction(async (tx) => {
+    const existing = await tx.getLinks(slug);
+    const desiredKeys = new Set(valid.map(c => `${c.targetSlug}\u0000${c.linkType}`));
+    const existingKeys = new Set(existing.map(l => `${l.to_slug}\u0000${l.link_type}`));
 
-  let created = 0, removed = 0, errors = 0;
+    let created = 0, removed = 0, errors = 0;
 
-  // Add new + update existing.
-  for (const c of valid) {
-    try {
-      await engine.addLink(slug, c.targetSlug, c.context, c.linkType);
-      if (!existingKeys.has(`${c.targetSlug}\u0000${c.linkType}`)) created++;
-    } catch {
-      errors++;
-    }
-  }
-
-  // Remove stale (in DB but not in desired set).
-  for (const l of existing) {
-    const key = `${l.to_slug}\u0000${l.link_type}`;
-    if (!desiredKeys.has(key)) {
+    // Add new + update existing.
+    for (const c of valid) {
       try {
-        await engine.removeLink(slug, l.to_slug, l.link_type);
-        removed++;
+        await tx.addLink(slug, c.targetSlug, c.context, c.linkType);
+        if (!existingKeys.has(`${c.targetSlug}\u0000${c.linkType}`)) created++;
       } catch {
         errors++;
       }
     }
-  }
 
-  return { created, removed, errors };
+    // Remove stale (in DB but not in desired set).
+    for (const l of existing) {
+      const key = `${l.to_slug}\u0000${l.link_type}`;
+      if (!desiredKeys.has(key)) {
+        try {
+          await tx.removeLink(slug, l.to_slug, l.link_type);
+          removed++;
+        } catch {
+          errors++;
+        }
+      }
+    }
+
+    return { created, removed, errors };
+  });
 }
 
 const delete_page: Operation = {
@@ -509,18 +525,32 @@ const get_backlinks: Operation = {
   cliHints: { name: 'backlinks', positional: ['slug'] },
 };
 
+/**
+ * Hard cap on traverse_graph depth from MCP callers. Each recursive CTE iteration
+ * grows a `visited` array per path; in `direction=both` the join is `OR`-based and
+ * fans out exponentially. Without a cap, a remote MCP caller can pass depth=1e6
+ * and burn memory/CPU on the database. 10 hops is well beyond any realistic
+ * relationship query (Wintermute's "people who attended meetings with Alice"
+ * is 2 hops; the deepest meaningful chain in our test data is 4).
+ */
+const TRAVERSE_DEPTH_CAP = 10;
+
 const traverse_graph: Operation = {
   name: 'traverse_graph',
   description: 'Traverse link graph from a page. With link_type/direction, returns edges (GraphPath[]) instead of nodes.',
   params: {
     slug: { type: 'string', required: true },
-    depth: { type: 'number', description: 'Max traversal depth (default 5)' },
+    depth: { type: 'number', description: `Max traversal depth (default 5, capped at ${TRAVERSE_DEPTH_CAP})` },
     link_type: { type: 'string', description: 'Filter to one link type (per-edge filter, traversal only follows matching edges)' },
     direction: { type: 'string', enum: ['in', 'out', 'both'], description: 'Traversal direction (default out)' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
-    const depth = (p.depth as number) || 5;
+    const requestedDepth = (p.depth as number) || 5;
+    if (requestedDepth > TRAVERSE_DEPTH_CAP) {
+      ctx.logger.warn(`[gbrain] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
+    }
+    const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     const linkType = p.link_type as string | undefined;
     const direction = p.direction as 'in' | 'out' | 'both' | undefined;
     // Backward compat: when neither link_type nor direction is provided, return
