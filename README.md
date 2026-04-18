@@ -213,24 +213,38 @@ gbrain skillpack-check | jq       # full JSON: {healthy, summary, actions[], doc
 
 If anything's off, `actions[]` tells you the exact command to run. For deeper troubleshooting: [`docs/guides/minions-fix.md`](docs/guides/minions-fix.md).
 
-## Skillify + check-resolvable: user-controllable auto-skill-creation
+## Skillify: your skills tree stops being a black box
 
-Hermes and similar agent frameworks auto-create skills in the background. That's fine until you don't know what the agent shipped — checklists decay, tests drift, resolver entries get stale. GBrain ships the same capability as two user-controlled tools:
+Hermes and similar agent frameworks auto-create skills as a background behavior. Fine until you don't know what the agent shipped. Checklists decay. Tests drift. Resolver entries get stale. Six months later you've got an opaque pile of "skills" that nobody has read, nobody has tested, and nobody is sure still work.
 
-- **`/skillify`** builds the full skill stack from raw code (SKILL.md + tests + LLM evals + resolver trigger + trigger eval + E2E + brain filing).
-- **`gbrain check-resolvable`** validates the whole skill tree: reachability, MECE overlap, DRY, gap detection, orphaned skills.
+GBrain ships the same capability. Except the human stays in the loop.
 
-You decide when and what. The human keeps judgment; the tooling keeps the checklist honest. Paired on Wintermute, this combo produces zero orphaned skills + every feature with tests + evals + resolver triggers + evals of the triggers.
+- **`/skillify`** turns raw code into a properly-skilled feature: SKILL.md + deterministic script + unit tests + integration tests + LLM evals + resolver trigger + resolver trigger eval + E2E smoke + brain filing. Ten items. Every one required.
+- **`gbrain check-resolvable`** walks the whole skills tree: reachability, MECE overlap, DRY violations, gap detection, orphaned skills. Exits non-zero if anything is off.
+- **`scripts/skillify-check.ts`** — machine-readable audit. `--json` for CI, `--recent` for last-7-days files.
+
+You decide when and what. The tooling keeps the checklist honest.
+
+### Why this is the right answer for OpenClaw
+
+Auto-generated skills are a liability the first time a behavior breaks. Was it the skill? The test? The resolver trigger? The eval? You don't know, because you never read it. Debugging a black box is pure guesswork.
+
+Skillify makes the black box legible. Every skill in your tree has: a contract (SKILL.md), tests that exercise that contract, an eval that grades LLM output against a rubric, a resolver trigger the user actually types, and a test that confirms the trigger routes right. If something breaks, you know which layer to look at. If anything goes stale, `check-resolvable` says so.
+
+In practice this combo produces **zero orphaned skills, every feature with tests + evals + resolver triggers + evals of the triggers.** Compounding quality instead of compounding entropy.
 
 ```bash
-# Audit a feature's skill completeness
+# Audit a feature's skill completeness (10-item checklist)
 bun run scripts/skillify-check.ts src/commands/publish.ts
 
-# Machine-readable output
+# In CI: fail the build when a new feature isn't properly skilled
 bun run scripts/skillify-check.ts --json --recent
+
+# Validate the whole skills tree before shipping
+gbrain check-resolvable
 ```
 
-Read `skills/skillify/SKILL.md` for the 10-item checklist.
+**Skillify is not a nice-to-have. It's the piece that makes the skills tree survive six months of compounding work.** Read [`skills/skillify/SKILL.md`](skills/skillify/SKILL.md) for the full 10-item checklist and the anti-patterns it catches.
 
 ## Getting Data In
 
