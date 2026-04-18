@@ -316,6 +316,30 @@ Write migration files as agent instructions, not technical notes. Tell the agent
 what to do, step by step, with exact commands. See `skills/migrations/v0.5.0.md`
 for the pattern.
 
+## Migration is canonical, not advisory
+
+GBrain's job is to deliver a canonical, working setup to every user on upgrade.
+Anything that looks like a "host-repo change" — AGENTS.md, cron manifests,
+launchctl units, config files outside `~/.gbrain/` — is a GBrain migration
+step, not a nudge we leave for the host-repo maintainer. Migrations edit host
+files (with backups) to make the canonical setup real. Exceptions: changes
+that require human judgment (content edits, renames that break semantics,
+host-specific handler registration where shell-exec would be an RCE surface).
+Everything mechanical ships in the migration.
+
+**Test:** if shipping a feature requires a sentence that starts with "in
+your AGENTS.md, add…" or "in your cron/jobs.json, rewrite…", the migration
+orchestrator should be doing that edit, not the user.
+
+**The exception is host-specific code.** For custom Minion handlers
+(`ea-inbox-sweep`, `frameio-scan`, etc. on Wintermute), shipping them as a
+data file the worker would exec is an RCE surface. Those get registered in
+the host's own repo via the plugin contract (`docs/guides/plugin-handlers.md`);
+the migration orchestrator emits a structured TODO to
+`~/.gbrain/migrations/pending-host-work.jsonl` + the host agent walks the
+TODOs using `skills/migrations/v0.11.0.md` — stays host-agnostic, still
+canonical.
+
 ## Schema state tracking
 
 `~/.gbrain/update-state.json` tracks which recommended schema directories the user

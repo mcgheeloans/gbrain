@@ -214,6 +214,37 @@ gbrain jobs work --concurrency 4         # start a worker daemon (Postgres only)
 
 Read `skills/minion-orchestrator/SKILL.md` for the full orchestration patterns (parent-child DAGs, fan-in collection, steering via inbox).
 
+### v0.11.0 migration didn't fire on your upgrade?
+
+If you upgraded to v0.11.0 and Minions is partially set up (no `~/.gbrain/preferences.json`, autopilot still inline, cron jobs still on `agentTurn`), you hit the mega-bug where `runPostUpgrade` printed the feature pitch but never executed the migration. Two repair paths:
+
+- **v0.11.1 binary installed**: `gbrain upgrade && gbrain apply-migrations --yes`.
+- **Stuck on v0.11.0 binary**: paste this stopgap, then upgrade + apply-migrations:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash
+  ```
+
+Full troubleshooting: [`docs/guides/minions-fix.md`](docs/guides/minions-fix.md).
+
+## Skillify + check-resolvable: user-controllable auto-skill-creation
+
+Hermes and similar agent frameworks auto-create skills in the background. That's fine until you don't know what the agent shipped — checklists decay, tests drift, resolver entries get stale. GBrain ships the same capability as two user-controlled tools:
+
+- **`/skillify`** builds the full skill stack from raw code (SKILL.md + tests + LLM evals + resolver trigger + trigger eval + E2E + brain filing).
+- **`gbrain check-resolvable`** validates the whole skill tree: reachability, MECE overlap, DRY, gap detection, orphaned skills.
+
+You decide when and what. The human keeps judgment; the tooling keeps the checklist honest. Paired on Wintermute, this combo produces zero orphaned skills + every feature with tests + evals + resolver triggers + evals of the triggers.
+
+```bash
+# Audit a feature's skill completeness
+bun run scripts/skillify-check.ts src/commands/publish.ts
+
+# Machine-readable output
+bun run scripts/skillify-check.ts --json --recent
+```
+
+Read `skills/skillify/SKILL.md` for the 10-item checklist.
+
 ## Getting Data In
 
 GBrain ships integration recipes that your agent sets up for you. Each recipe tells the agent what credentials to ask for, how to validate, and what cron to register.

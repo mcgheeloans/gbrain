@@ -2,6 +2,69 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.11.1] - 2026-04-18
+
+### Fixed — the v0.11.0 migration mega-bug
+
+Your v0.11.0 upgrade shipped the Minions schema, worker, queue, and migration skill. It didn't ship the actual migration running on upgrade. If you upgraded and ended up with no `~/.gbrain/preferences.json`, autopilot still running inline, and cron jobs still hitting `agentTurn`'s 300s timeout — that's the bug. This release fixes it and auto-repairs on your next `gbrain upgrade`.
+
+- **`gbrain apply-migrations` is the canonical repair.** Reads `~/.gbrain/migrations/completed.jsonl`, diffs against the TS migration registry, runs any pending orchestrators. Idempotent: rerunning on a healthy install is cheap and silent.
+- **`gbrain upgrade` and `postinstall` now invoke it.** `runPostUpgrade` tail-calls `apply-migrations --yes` unconditionally (Codex caught that the earlier early-return on missing upgrade-state.json left broken-v0.11.0 installs broken forever). `package.json`'s new `postinstall` hook runs it after `bun update gbrain` / `npm i gbrain`. First-install guard keeps postinstall silent when no brain is configured yet.
+- **Stopgap for v0.11.0 binaries without this release:** paste `curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash`. It writes `preferences.json` + a `status: "partial"` record so the eventual `apply-migrations --yes` run picks up where it left off — the stopgap does not poison the permanent migration path.
+
+### Added — autopilot supervises Minions itself, one install step
+
+Before this release, autopilot + `gbrain jobs work` were two separate processes you had to manage. Now autopilot is the one install step, and it forks the Minions worker as a child with 10s-backoff restart + 5-crash cap + async SIGTERM drain that waits up to 35s for the worker to commit in-flight work before SIGKILL.
+
+- **Autopilot dispatches each cycle as a single `autopilot-cycle` Minion job** with `idempotency_key: autopilot-cycle:<slot>`. A 5-min autopilot + 8-min embed no longer stacks 4 overlapping runs — the queue's unique partial index dedupes at the DB layer. Codex caught that the earlier "parent/child DAG" plan was a category error (parent/child in Minions flips the parent to `waiting-children`, not the child to `waiting-for-parent`, so extract would have run before sync).
+- **Per-step partial-failure handling.** Each of sync / extract / embed / backlinks is wrapped in its own try/catch. Handler returns `{ partial: true, failed_steps: [...] }` when any step fails; never throws. An intermittent extract bug no longer blocks every future cycle via Minion retry.
+- **Env-aware `gbrain autopilot --install`** picks the right supervisor: launchd on macOS, systemd user unit on Linux-with-systemd (with a stricter `systemctl --user is-system-running` probe — the naive `/run/systemd/system` check was a false-positive magnet), bootstrap hook on ephemeral containers (Render / Railway / Fly / Docker — auto-injects into OpenClaw's `hooks/bootstrap/ensure-services.sh` when detected, use `--no-inject` to opt out), crontab otherwise. `--target` overrides detection. Uninstall mirrors all four targets.
+- **Worker child spawn uses `resolveGbrainCliPath()`** — never blindly uses `process.execPath` (on source installs that's the Bun runtime, not `gbrain`). Resolution tries argv[1], then execPath ending `/gbrain`, then `which gbrain`.
+
+### Added — library-level Core fns so handlers don't kill workers
+
+Reusing CLI entry-point functions (`runExtract`, `runEmbed`, etc.) as Minion handler bodies was wrong — any `process.exit(1)` on bad args would kill the entire worker process and every in-flight job. New Core fns throw instead:
+
+- `runExtractCore(engine, opts)` — wraps extract-links + extract-timeline.
+- `runEmbedCore(engine, opts)` — accepts `{ slug, slugs, all, stale }`.
+- `runBacklinksCore(opts)` — `{ action: 'check' | 'fix', dir, dryRun }`.
+- `runLintCore(opts)` — returns counts, doesn't print human detail (CLI wrapper does that).
+
+CLI wrappers (`runExtract`, `runEmbed`, etc.) stay as thin arg-parsers that catch + `process.exit(1)`. Handlers in `jobs.ts` import the Core fns directly.
+
+### Added — skillify ships as a first-class gbrain skill
+
+Ported from Wintermute, proven in production. Paired with `gbrain check-resolvable` gives a user-controllable equivalent of Hermes' auto-skill-creation — you decide when and what, the tooling keeps the 10-item checklist honest.
+
+- `skills/skillify/SKILL.md` — the meta skill. Triggers: "skillify this", "is this a skill?", "make this proper".
+- `scripts/skillify-check.ts` — machine-readable audit. `--json` for CI, `--recent` to check files modified in the last 7 days.
+- README now has a short section explaining the Skillify + check-resolvable pair and why user-controlled beats auto-generated.
+
+### Added — host-agnostic plugin contract (replaces handlers.json)
+
+An earlier design draft shipped `~/.claude/gbrain-handlers.json` where each entry was a shell command the worker would exec. Codex flagged this as a durable RCE surface. Dropped in favor of a code-level plugin contract:
+
+- `docs/guides/plugin-handlers.md` — the full contract. Host imports `gbrain/minions`, constructs a `MinionWorker`, calls `worker.register(name, fn)` for every custom handler, calls `worker.start()`. Ships the bootstrap as code in the host repo, same trust model as any other code.
+- `skills/conventions/cron-via-minions.md` — the rewrite convention for cron manifests. PGLite branch keeps `--follow` (inline); Postgres branch drops `--follow` + uses `--idempotency-key` on the cycle slot.
+- `skills/migrations/v0.11.0.md` — body restored as the host-agent instruction manual. Walks the host through every JSONL TODO using the 10-item skillify checklist.
+
+### Added — `gbrain init --migrate-only` (the Codex H1 fix)
+
+Running bare `gbrain init` with no flags defaulted to PGLite and called `saveConfig` — silently clobbering any existing Postgres config. The migration orchestrator now calls `gbrain init --migrate-only` which only applies the schema against the configured engine and NEVER writes a new config. Apply-migrations + stopgap + postinstall all use this flag. Bare `gbrain init` still exists and still defaults to PGLite when you want a fresh install.
+
+### Changed
+
+- `runPostUpgrade` is now async + runs `apply-migrations --yes` unconditionally (Codex H8).
+- `gbrain upgrade`'s subprocess timeout for `post-upgrade` bumped 30s → 300s so the migration has room to do real work like autopilot install (Codex H7).
+- Migration enumeration uses a TS registry at `src/commands/migrations/index.ts` instead of walking `skills/migrations/*.md` on disk — compiled binaries see the same set source installs do (Codex K).
+- Migration diff rule: apply when no `status: "complete"` entry exists in `completed.jsonl` AND `version ≤ installed VERSION`. Earlier proposed "version > currentVersion" would have SKIPPED v0.11.0 when running v0.11.1 (Codex H9).
+- Autopilot refreshes its lock-file mtime every cycle so a long-lived autopilot doesn't get declared "stale" by the next cron-fired invocation after 10 minutes (Codex C).
+- CLAUDE.md gained a new "Migration is canonical, not advisory" section pinning the design principle.
+
+### Tests
+
+34 new unit tests across preferences, init-migrate-only, apply-migrations, v0.11.0 orchestrator, handlers, autopilot-resolve-cli, autopilot-install, skillify-check. All 1177 existing tests still green.
+
 ## [0.11.0] - 2026-04-18
 
 ### Added — Minions (agent orchestration primitives)
