@@ -77,7 +77,7 @@ function tokenize(text: string): string[] {
     .filter(Boolean);
 }
 
-function expandQueryTerms(query: string, limit = DEFAULT_EXPANSION_LIMIT): string[] {
+function expandQueryTermsLocal(query: string, limit = DEFAULT_EXPANSION_LIMIT): string[] {
   const variants = new Set<string>([query.trim()]);
   const tokens = tokenize(query);
 
@@ -92,6 +92,22 @@ function expandQueryTerms(query: string, limit = DEFAULT_EXPANSION_LIMIT): strin
   }
 
   return [...variants].filter(Boolean).slice(0, limit + 1);
+}
+
+/**
+ * LLM-powered expansion using memory-lancedb-pro's OAuth (gpt-5.4-mini, free tier).
+ * Falls back to local term-map expansion on any failure.
+ */
+async function expandQueryTermsLlm(query: string, limit = DEFAULT_EXPANSION_LIMIT): Promise<string[]> {
+  try {
+    const { expandQueryWithLlm } = await import('./llm-expand.ts');
+    const expanded = await expandQueryWithLlm(query, { maxVariants: limit });
+    if (expanded.length > 1) return expanded;
+    // LLM returned only the original — fall back to local
+    return expandQueryTermsLocal(query, limit);
+  } catch {
+    return expandQueryTermsLocal(query, limit);
+  }
 }
 
 function keywordScore(query: string, text: string, title = ''): number {
@@ -404,7 +420,7 @@ export async function searchPersonChunks(
   const limit = options.limit ?? 8;
   const vectorLimit = options.vectorLimit ?? Math.max(limit * 2, 8);
   const keywordLimit = options.keywordLimit ?? Math.max(limit * 3, 12);
-  const queries = options.expansion === false ? [trimmed] : expandQueryTerms(trimmed, options.expansionLimit);
+  const queries = options.expansion === false ? [trimmed] : await expandQueryTermsLlm(trimmed, options.expansionLimit);
 
   const embedder = new JinaEmbedder();
   const queryVector = await embedder.embedQuery(trimmed);
