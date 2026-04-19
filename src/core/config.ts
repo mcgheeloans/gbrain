@@ -11,6 +11,8 @@ export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
   database_url?: string;
   database_path?: string;
+  clite_database_path?: string;
+  query_backend?: 'core' | 'clite';
   openai_api_key?: string;
   anthropic_api_key?: string;
 }
@@ -40,6 +42,8 @@ export function loadConfig(): GBrainConfig | null {
     ...fileConfig,
     engine: inferredEngine,
     ...(dbUrl ? { database_url: dbUrl } : {}),
+    ...(process.env.GBRAIN_CLITE_DATABASE_PATH ? { clite_database_path: process.env.GBRAIN_CLITE_DATABASE_PATH } : {}),
+    ...(process.env.GBRAIN_QUERY_BACKEND ? { query_backend: process.env.GBRAIN_QUERY_BACKEND as 'core' | 'clite' } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
   };
   return merged as GBrainConfig;

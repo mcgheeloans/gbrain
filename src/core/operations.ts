@@ -12,6 +12,7 @@ import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
 import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
+import { cliteQuerySearch } from './search/clite-adapter.ts';
 import { dedupResults } from './search/dedup.ts';
 import { extractPageLinks, isAutoLinkEnabled } from './link-extraction.ts';
 import * as db from './db.ts';
@@ -406,9 +407,20 @@ const query: Operation = {
   handler: async (ctx, p) => {
     const expand = p.expand !== false;
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
+    const limit = (p.limit as number) || 20;
+    const offset = (p.offset as number) || 0;
+
+    if (ctx.config.query_backend === 'clite') {
+      return cliteQuerySearch(ctx.config, p.query as string, {
+        limit,
+        offset,
+        expansion: expand,
+      });
+    }
+
     return hybridSearch(ctx.engine, p.query as string, {
-      limit: (p.limit as number) || 20,
-      offset: (p.offset as number) || 0,
+      limit,
+      offset,
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
       detail,
