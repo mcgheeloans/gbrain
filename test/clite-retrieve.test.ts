@@ -86,7 +86,7 @@ describe('retrieve-person', () => {
     ingestNote(db, DEMO_NOTE);
     await compilePerson(db, 'people/sarah-chen', PAGES_DIR);
 
-    const results = await searchPersonChunks('Sarah Chen Acme Corp August 15 partnership expansion', { limit: 8 });
+    const results = await searchPersonChunks('Sarah Chen Acme Corp August 15 partnership expansion', { limit: 8, expansion: false });
     const sarahResults = results.filter((r) => r.slug === 'people/sarah-chen');
 
     expect(sarahResults.length).toBeLessThanOrEqual(2);
