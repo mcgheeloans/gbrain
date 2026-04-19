@@ -50,6 +50,12 @@ export interface PersonChunk {
   text: string;
 }
 
+export interface ChunkMetadata {
+  topic?: string;
+  label?: string;
+  priority?: number;
+}
+
 export interface UpsertPersonOptions {
   /** Entity slug, e.g. "sarah-chen" */
   slug: string;
@@ -61,6 +67,8 @@ export interface UpsertPersonOptions {
   chunks: PersonChunk[];
   /** Jina embeddings for each chunk (same order) */
   vectors: number[][];
+  /** Optional per-chunk metadata (topic, label, priority) */
+  chunkMetadata?: ChunkMetadata[];
 }
 
 /**
@@ -88,23 +96,29 @@ export async function upsertPersonChunks(
 
   // Build entries with correct MemoryEntry schema
   const now = Date.now();
-  const entries = chunks.map((chunk, i) => ({
-    id: `${slug}:${chunk.index}`,
-    text: chunk.text,
-    vector: vectors[i],
-    category: 'entity' as const,
-    scope: SCOPE,
-    importance: 0.7,
-    timestamp: now,
-    metadata: JSON.stringify({
-      slug,
-      title,
-      entity_type: entityType,
-      chunk_index: chunk.index,
-      chunk_source: 'compiled_truth',
-      source: 'gbrain-c-lite',
-    }),
-  }));
+  const entries = chunks.map((chunk, i) => {
+    const meta = options.chunkMetadata?.[i];
+    return {
+      id: `${slug}:${chunk.index}`,
+      text: chunk.text,
+      vector: vectors[i],
+      category: 'entity' as const,
+      scope: SCOPE,
+      importance: Math.max(0.5, Math.min(1.0, 0.5 + (meta?.priority ?? 5) * 0.05)),
+      timestamp: now,
+      metadata: JSON.stringify({
+        slug,
+        title,
+        entity_type: entityType,
+        chunk_index: chunk.index,
+        chunk_source: 'compiled_truth',
+        source: 'gbrain-c-lite',
+        topic: meta?.topic ?? 'general',
+        topic_label: meta?.label ?? '',
+        priority: meta?.priority ?? 5,
+      }),
+    };
+  });
 
   if (entries.length > 0) {
     await table.add(entries);

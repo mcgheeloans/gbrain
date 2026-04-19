@@ -474,6 +474,11 @@ export async function searchPersonChunks(
     if (chunk.chunkSource === 'compiled_truth') {
       score *= COMPILED_TRUTH_BOOST;
     }
+    // Topic priority boost: employment/skills/relationships get a bump
+    const topicPriority = typeof chunk.metadata?.priority === 'number' ? chunk.metadata.priority as number : 5;
+    if (topicPriority >= 8) {
+      score *= 1.2; // 20% boost for high-priority topics
+    }
     return { ...chunk, score };
   });
 

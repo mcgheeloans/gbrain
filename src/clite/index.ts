@@ -62,6 +62,8 @@ export type { VerifySliceResult, CheckResult, CheckStatus } from './verify-slice
 
 export { JinaEmbedder } from './embedder.ts';
 export { upsertPersonChunks, hasEntriesForSlug, getSharedTable } from './lance-store.ts';
-export { indexPersonPage } from './index-person.ts';
+export { indexPersonPage, indexTopicChunks } from './index-person.ts';
+export { renderTopicChunks } from './render-topic-chunks.ts';
+export type { TopicChunk } from './render-topic-chunks.ts';
 export { retrievePersonChunks, searchPersonChunks, retrievePersonPages } from './retrieve-person.ts';
 export type { RetrievedPersonChunk, RetrievedPersonPage } from './retrieve-person.ts';
