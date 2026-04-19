@@ -1,7 +1,7 @@
 import type { SearchResult } from '../types.ts';
 import type { GBrainConfig } from '../config.ts';
 import { open as openClite } from '../../clite/bootstrap.ts';
-import { retrievePersonPages } from '../../clite/retrieve-person.ts';
+import { retrieveEntityPages } from '../../clite/retrieve-person.ts';
 
 function toPageType(entityType?: string): SearchResult['type'] {
   switch (entityType) {
@@ -32,7 +32,7 @@ export async function cliteQuerySearch(
   const db = openClite(config.clite_database_path);
   try {
     const pageLimit = Math.max((opts.limit ?? 20) + (opts.offset ?? 0), 8);
-    const pages = await retrievePersonPages(query, {
+    const pages = await retrieveEntityPages(query, {
       limit: pageLimit,
       db,
       expansion: opts.expansion,

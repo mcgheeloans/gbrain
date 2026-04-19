@@ -184,7 +184,7 @@ export function ingestNote(db: Database, note: string): IngestNoteResult {
       verification: true,
     },
     warnings: [
-      'Wiki compile is the caller\'s responsibility after ingest — call compilePerson() separately.',
+      'Wiki compile is the caller\'s responsibility after ingest — call compileEntity() separately.',
       'Retrieval refresh not yet implemented — search index not updated.',
     ],
   };

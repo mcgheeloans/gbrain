@@ -6,7 +6,7 @@ import { compilePerson } from '../src/clite/compile-person.ts';
 import { retrievePersonChunks, searchPersonChunks, retrievePersonPages } from '../src/clite/retrieve-person.ts';
 import { upsertEntity } from '../src/clite/entities.ts';
 import { insertTriple } from '../src/clite/triples.ts';
-const SHARED_SCOPE = 'gbrain:people';
+const SHARED_SCOPE = 'gbrain:entities';
 
 const TEST_DB = '/tmp/gbrain-clite-retrieve-test.db';
 const PAGES_DIR = '/tmp/gbrain-clite-retrieve-test-pages';
@@ -154,7 +154,7 @@ describe('retrieve-person', () => {
       },
     ]);
 
-    const results = await searchPersonChunks('Sarah Chen Acme Corp partnership', { limit: 5, db });
+    const results = await searchPersonChunks('Sarah Chen Acme Corp partnership', { limit: 5, db, expansion: false });
     const types = new Set(results.map((r) => r.entityType));
 
     expect(results.length).toBeGreaterThan(0);

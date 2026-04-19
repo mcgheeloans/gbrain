@@ -10,10 +10,10 @@
  * focuses on a specific aspect of the entity (employment, skills, relationships, etc.)
  */
 
-import type { PersonChunk } from './lance-store.ts';
+import type { EntityChunk } from './lance-store.ts';
 import type { TopicChunk } from './render-topic-chunks.ts';
 import { JinaEmbedder } from './embedder.ts';
-import { upsertPersonChunks } from './lance-store.ts';
+import { upsertEntityChunks } from './lance-store.ts';
 import type { Database } from 'bun:sqlite';
 
 const CHUNK_SIZE = 500;
@@ -29,7 +29,7 @@ export async function indexTopicChunks(
   slug: string,
   title: string,
   topicChunks: TopicChunk[],
-  options?: { db?: Database },
+  options?: { db?: Database; entityType?: string },
 ): Promise<number> {
   if (topicChunks.length === 0) return 0;
 
@@ -42,16 +42,17 @@ export async function indexTopicChunks(
     allVectors.push(...vecs);
   }
 
-  // Convert TopicChunks to PersonChunks for LanceDB storage
-  const chunks: PersonChunk[] = topicChunks.map((tc, i) => ({
+  // Convert TopicChunks to EntityChunks for LanceDB storage
+  const chunks: EntityChunk[] = topicChunks.map((tc, i) => ({
     index: i,
     text: tc.text,
   }));
 
   // Upsert with topic metadata
-  await upsertPersonChunks({
+  await upsertEntityChunks({
     slug,
     title,
+    entityType: options?.entityType ?? 'person',
     chunks,
     vectors: allVectors,
     // Extra metadata per chunk
@@ -89,7 +90,7 @@ export async function indexPersonPage(
   const embedder = new JinaEmbedder();
   const vectors = await embedder.embed(chunks.map((c) => c.text));
 
-  await upsertPersonChunks({ slug, title, chunks, vectors });
+  await upsertEntityChunks({ slug, title, chunks, vectors });
 
   // Sync to FTS5 for keyword search
   if (options?.db) {
@@ -102,7 +103,7 @@ export async function indexPersonPage(
 /**
  * Split text into overlapping character chunks.
  */
-function chunkText(text: string, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP): PersonChunk[] {
+function chunkText(text: string, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP): EntityChunk[] {
   if (!text || text.length === 0) return [];
 
   const chunks: PersonChunk[] = [];

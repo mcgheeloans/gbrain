@@ -21,7 +21,7 @@ import * as lancedb from '@lancedb/lancedb';
 
 const LANCEDB_PATH = `${process.env.HOME}/.openclaw/memory/lancedb-pro`;
 const TABLE_NAME = 'memories';
-const SCOPE = 'gbrain:people';
+const SCOPE = 'gbrain:entities';
 
 // ---------------------------------------------------------------------------
 // LanceDB connection (lazy singleton per process)
@@ -45,10 +45,14 @@ export async function getSharedTable() {
 // Public API
 // ---------------------------------------------------------------------------
 
-export interface PersonChunk {
+export interface EntityChunk {
   index: number;
   text: string;
 }
+
+// Backward compat alias
+/** @deprecated use EntityChunk */
+export type PersonChunk = EntityChunk;
 
 export interface ChunkMetadata {
   topic?: string;
@@ -56,36 +60,40 @@ export interface ChunkMetadata {
   priority?: number;
 }
 
-export interface UpsertPersonOptions {
-  /** Entity slug, e.g. "sarah-chen" */
+export interface UpsertEntityOptions {
+  /** Entity slug, e.g. "people/sarah-chen" */
   slug: string;
   /** Page title, e.g. "Sarah Chen" */
   title: string;
-  /** Entity type, e.g. "person" */
+  /** Entity type, e.g. "person", "company", "project" */
   entityType?: string;
   /** Compiled markdown chunks for this page */
-  chunks: PersonChunk[];
+  chunks: EntityChunk[];
   /** Jina embeddings for each chunk (same order) */
   vectors: number[][];
   /** Optional per-chunk metadata (topic, label, priority) */
   chunkMetadata?: ChunkMetadata[];
 }
 
+// Backward compat alias
+/** @deprecated use UpsertEntityOptions */
+export type UpsertPersonOptions = UpsertEntityOptions;
+
 /**
- * Upsert compiled person chunks to the shared LanceDB.
+ * Upsert compiled entity chunks to the shared LanceDB.
  *
  * Delete-then-add pattern: removes any existing chunks for this slug,
  * then adds the new ones. This ensures re-compiling replaces old entries
  * rather than duplicating them.
  */
-export async function upsertPersonChunks(
-  options: UpsertPersonOptions,
+export async function upsertEntityChunks(
+  options: UpsertEntityOptions,
 ): Promise<void> {
   const { slug, title, entityType = 'person', chunks, vectors } = options;
 
   if (chunks.length !== vectors.length) {
     throw new Error(
-      `upsertPersonChunks: chunk count (${chunks.length}) != vector count (${vectors.length})`,
+      `upsertEntityChunks: chunk count (${chunks.length}) != vector count (${vectors.length})`,
     );
   }
 
@@ -124,6 +132,10 @@ export async function upsertPersonChunks(
     await table.add(entries);
   }
 }
+
+// Backward compat alias
+/** @deprecated use upsertEntityChunks */
+export const upsertPersonChunks = upsertEntityChunks;
 
 /**
  * Check whether any entries exist in LanceDB for a given slug.

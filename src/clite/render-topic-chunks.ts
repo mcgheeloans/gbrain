@@ -1,20 +1,14 @@
 /**
- * Topic-specific chunk rendering for person entities.
+ * Topic-specific chunk rendering for entity pages.
  *
  * Instead of one monolithic compiled page, this produces multiple
- * topic-focused chunks per person, each with unique vocabulary
+ * topic-focused chunks per entity, each with unique vocabulary
  * that produces distinctive embeddings.
  *
- * Topics are derived from the structured triples in the SQLite sidecar:
- *   - employment: works_at, role, department
- *   - skills/expertise: specializes_in, knows, certified_in
- *   - relationships: manages, reports_to, collaborates_with, mentored_by
- *   - projects: leads, contributes_to, owns
- *   - education: educated_at, degree
- *   - background: anything else (summary, aliases, generic triples)
- *
- * Each topic chunk is a self-contained paragraph that includes
- * the person's name and enough context to be meaningful on its own.
+ * Topic maps differ by entity type:
+ *   - person: employment, skills, relationships, projects, education
+ *   - company: founding, industry, location, products, team, info
+ *   - project: status, timeline, technology, code, deliverables
  */
 
 import type { EntityState } from './read-models.ts';
@@ -31,8 +25,9 @@ export interface TopicChunk {
   priority: number;
 }
 
-// Predicate → topic mapping
-const PREDICATE_TOPICS: Record<string, string> = {
+// ── Predicate → topic maps by entity type ────────────────────────────
+
+const PERSON_PREDICATE_TOPICS: Record<string, string> = {
   works_at: 'employment',
   role: 'employment',
   department: 'employment',
@@ -58,7 +53,32 @@ const PREDICATE_TOPICS: Record<string, string> = {
   alumni_of: 'education',
 };
 
-const TOPIC_LABELS: Record<string, string> = {
+const COMPANY_PREDICATE_TOPICS: Record<string, string> = {
+  founded: 'founding',
+  industry: 'industry',
+  headquarters: 'location',
+  products: 'products',
+  employee_count: 'team',
+  website: 'info',
+  revenue: 'info',
+  stage: 'info',
+  description: 'info',
+};
+
+const PROJECT_PREDICATE_TOPICS: Record<string, string> = {
+  status: 'status',
+  started: 'timeline',
+  deadline: 'timeline',
+  tech_stack: 'technology',
+  repo_url: 'code',
+  deliverables: 'deliverables',
+  priority: 'status',
+  budget: 'info',
+};
+
+// ── Topic labels per entity type ────────────────────────────────────
+
+const PERSON_TOPIC_LABELS: Record<string, string> = {
   employment: 'Employment',
   skills: 'Skills & Expertise',
   relationships: 'Relationships & Team',
@@ -67,7 +87,29 @@ const TOPIC_LABELS: Record<string, string> = {
   background: 'Overview',
 };
 
-const TOPIC_PRIORITY: Record<string, number> = {
+const COMPANY_TOPIC_LABELS: Record<string, string> = {
+  founding: 'Founding',
+  industry: 'Industry',
+  location: 'Headquarters & Location',
+  products: 'Products & Services',
+  team: 'Team',
+  info: 'Company Info',
+  background: 'Overview',
+};
+
+const PROJECT_TOPIC_LABELS: Record<string, string> = {
+  status: 'Status',
+  timeline: 'Timeline',
+  technology: 'Technology',
+  code: 'Code & Repos',
+  deliverables: 'Deliverables',
+  info: 'Project Info',
+  background: 'Overview',
+};
+
+// ── Topic priority ──────────────────────────────────────────────────
+
+const PERSON_TOPIC_PRIORITY: Record<string, number> = {
   employment: 10,
   skills: 9,
   relationships: 8,
@@ -76,13 +118,74 @@ const TOPIC_PRIORITY: Record<string, number> = {
   background: 3,
 };
 
+const COMPANY_TOPIC_PRIORITY: Record<string, number> = {
+  founding: 9,
+  industry: 8,
+  products: 8,
+  team: 7,
+  location: 6,
+  info: 4,
+  background: 3,
+};
+
+const PROJECT_TOPIC_PRIORITY: Record<string, number> = {
+  status: 10,
+  timeline: 9,
+  technology: 8,
+  code: 7,
+  deliverables: 7,
+  info: 4,
+  background: 3,
+};
+
+// ── Core rendering ─────────────────────────────────────────────────
+
 /**
- * Group triples by their inferred topic.
+ * Get the predicate-topic map for a given entity type.
  */
-function groupByTopic(triples: TripleRow[]): Map<string, TripleRow[]> {
+function getPredicateMap(entityType: string): Record<string, string> {
+  switch (entityType) {
+    case 'company':
+      return COMPANY_PREDICATE_TOPICS;
+    case 'project':
+      return PROJECT_PREDICATE_TOPICS;
+    case 'person':
+    default:
+      return PERSON_PREDICATE_TOPICS;
+  }
+}
+
+function getTopicLabels(entityType: string): Record<string, string> {
+  switch (entityType) {
+    case 'company':
+      return COMPANY_TOPIC_LABELS;
+    case 'project':
+      return PROJECT_TOPIC_LABELS;
+    case 'person':
+    default:
+      return PERSON_TOPIC_LABELS;
+  }
+}
+
+function getTopicPriority(entityType: string): Record<string, number> {
+  switch (entityType) {
+    case 'company':
+      return COMPANY_TOPIC_PRIORITY;
+    case 'project':
+      return PROJECT_TOPIC_PRIORITY;
+    case 'person':
+    default:
+      return PERSON_TOPIC_PRIORITY;
+  }
+}
+
+/**
+ * Group triples by their inferred topic using the appropriate predicate map.
+ */
+function groupByTopic(triples: TripleRow[], predicateMap: Record<string, string>): Map<string, TripleRow[]> {
   const groups = new Map<string, TripleRow[]>();
   for (const t of triples) {
-    const topic = PREDICATE_TOPICS[t.predicate] ?? 'background';
+    const topic = predicateMap[t.predicate] ?? 'background';
     if (!groups.has(topic)) groups.set(topic, []);
     groups.get(topic)!.push(t);
   }
@@ -111,54 +214,78 @@ function renderTopicParagraph(
     parts.push(`${pred} ${obj}`);
   }
 
-  const label = TOPIC_LABELS[topic] ?? topic;
-  const joined = parts.join('. ');
-
   switch (topic) {
     case 'employment':
-      return `${name} — Employment: ${joined}.`;
+      return `${name} — Employment: ${parts.join('. ')}.`;
     case 'skills':
-      return `${name} — Skills & Expertise: ${name} ${joined}.`;
+      return `${name} — Skills & Expertise: ${name} ${parts.join('. ')}.`;
     case 'relationships':
-      return `${name} — Relationships: ${name} ${joined}.`;
+      return `${name} — Relationships: ${name} ${parts.join('. ')}.`;
     case 'projects':
-      return `${name} — Projects: ${name} ${joined}.`;
+      return `${name} — Projects: ${name} ${parts.join('. ')}.`;
     case 'education':
-      return `${name} — Education: ${name} ${joined}.`;
+      return `${name} — Education: ${name} ${parts.join('. ')}.`;
+    case 'founding':
+      return `${name} — Founded: ${parts.join('. ')}.`;
+    case 'industry':
+      return `${name} — Industry: ${parts.join('. ')}.`;
+    case 'products':
+      return `${name} — Products & Services: ${parts.join('. ')}.`;
+    case 'team':
+      return `${name} — Team: ${parts.join('. ')}.`;
+    case 'location':
+      return `${name} — Location: ${parts.join('. ')}.`;
+    case 'status':
+      return `${name} — Status: ${parts.join('. ')}.`;
+    case 'timeline':
+      return `${name} — Timeline: ${parts.join('. ')}.`;
+    case 'technology':
+      return `${name} — Technology: ${parts.join('. ')}.`;
+    case 'code':
+      return `${name} — Code: ${parts.join('. ')}.`;
+    case 'deliverables':
+      return `${name} — Deliverables: ${parts.join('. ')}.`;
     default:
-      return `${name}: ${joined}.`;
+      return `${name}: ${parts.join('. ')}.`;
   }
 }
 
 /**
- * Render topic-specific chunks for a person entity.
+ * Render topic-specific chunks for an entity.
  *
- * Returns one TopicChunk per topic that has at least one triple,
- * plus a background/overview chunk with the entity summary and aliases.
+ * @param state - composed entity state from getEntityState
+ * @param slugTitleMap - optional map of entity slugs to display titles
+ * @param entityType - entity type ('person', 'company', 'project'); defaults to state.entity.type
  */
 export function renderTopicChunks(
   state: EntityState,
   slugTitleMap?: Map<string, string>,
+  entityType?: string,
 ): TopicChunk[] {
   const { entity, triples, aliases } = state;
+  const type = entityType ?? entity.type ?? 'person';
   const name = entity.title ?? entity.slug;
   const chunks: TopicChunk[] = [];
 
+  const predicateMap = getPredicateMap(type);
+  const topicLabels = getTopicLabels(type);
+  const topicPriority = getTopicPriority(type);
+
   // Group subject triples by topic
   const subjectTriples = triples.filter(t => t.subject_entity_slug === entity.slug);
-  const topicGroups = groupByTopic(subjectTriples);
+  const topicGroups = groupByTopic(subjectTriples, predicateMap);
 
   // Render each topic group
   for (const [topic, topicTriples] of topicGroups) {
     chunks.push({
       topic,
-      label: TOPIC_LABELS[topic] ?? topic,
+      label: topicLabels[topic] ?? topic,
       text: renderTopicParagraph(name, topic, topicTriples, slugTitleMap),
-      priority: TOPIC_PRIORITY[topic] ?? 1,
+      priority: topicPriority[topic] ?? 1,
     });
   }
 
-  // Background/overview chunk: summary + aliases
+  // Background/overview chunk: summary + aliases + inbound context
   const backgroundParts: string[] = [];
   if (entity.summary) backgroundParts.push(entity.summary);
   if (aliases.length > 0) {
@@ -178,9 +305,9 @@ export function renderTopicChunks(
   if (backgroundParts.length > 0) {
     chunks.push({
       topic: 'background',
-      label: 'Overview',
+      label: topicLabels.background ?? 'Overview',
       text: `${name}. ${backgroundParts.join('. ')}.`,
-      priority: TOPIC_PRIORITY.background,
+      priority: topicPriority.background ?? 1,
     });
   }
 
@@ -188,7 +315,7 @@ export function renderTopicChunks(
   if (chunks.length === 0) {
     chunks.push({
       topic: 'background',
-      label: 'Overview',
+      label: topicLabels.background ?? 'Overview',
       text: `${name}.`,
       priority: 1,
     });

@@ -12,7 +12,7 @@ import type { Database } from 'bun:sqlite';
 import { JinaEmbedder } from './embedder.ts';
 import { getSharedTable } from './lance-store.ts';
 
-const SCOPE = 'gbrain:people';
+const SCOPE = 'gbrain:entities';
 const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
 const BACKLINK_BOOST_COEF = 0.05;
@@ -35,7 +35,7 @@ const QUERY_EXPANSION_MAP: Record<string, string[]> = {
   person: ['people', 'contact'],
 };
 
-export interface RetrievedPersonChunk {
+export interface RetrievedEntityChunk {
   id: string;
   text: string;
   score?: number;
@@ -48,7 +48,7 @@ export interface RetrievedPersonChunk {
   vector?: number[];
 }
 
-export interface RetrievedPersonPage {
+export interface RetrievedEntityPage {
   slug: string;
   title: string;
   entityType?: string;
@@ -56,7 +56,7 @@ export interface RetrievedPersonPage {
   fusedScore: number;
   chunkCount: number;
   snippets: string[];
-  chunks: RetrievedPersonChunk[];
+  chunks: RetrievedEntityChunk[];
 }
 
 function parseMetadata(raw: unknown): Record<string, unknown> {
@@ -132,7 +132,7 @@ function keywordScore(query: string, text: string, title = ''): number {
   return score;
 }
 
-function chunkKey(chunk: RetrievedPersonChunk): string {
+function chunkKey(chunk: RetrievedEntityChunk): string {
   return `${chunk.slug}:${chunk.chunkIndex ?? chunk.id}`;
 }
 
@@ -145,8 +145,8 @@ function jaccardSimilarity(a: string, b: string): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-function dedupBySource(results: RetrievedPersonChunk[]): RetrievedPersonChunk[] {
-  const byPage = new Map<string, RetrievedPersonChunk[]>();
+function dedupBySource(results: RetrievedEntityChunk[]): RetrievedEntityChunk[] {
+  const byPage = new Map<string, RetrievedEntityChunk[]>();
   for (const r of results) {
     const list = byPage.get(r.slug) ?? [];
     list.push(r);
@@ -158,8 +158,8 @@ function dedupBySource(results: RetrievedPersonChunk[]): RetrievedPersonChunk[] 
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
 
-function dedupByTextSimilarity(results: RetrievedPersonChunk[]): RetrievedPersonChunk[] {
-  const kept: RetrievedPersonChunk[] = [];
+function dedupByTextSimilarity(results: RetrievedEntityChunk[]): RetrievedEntityChunk[] {
+  const kept: RetrievedEntityChunk[] = [];
   for (const r of results) {
     const tooSimilar = kept.some((k) => jaccardSimilarity(r.text, k.text) > JACCARD_THRESHOLD);
     if (!tooSimilar) kept.push(r);
@@ -167,10 +167,10 @@ function dedupByTextSimilarity(results: RetrievedPersonChunk[]): RetrievedPerson
   return kept;
 }
 
-function enforceTypeDiversity(results: RetrievedPersonChunk[], maxRatio = MAX_TYPE_RATIO): RetrievedPersonChunk[] {
+function enforceTypeDiversity(results: RetrievedEntityChunk[], maxRatio = MAX_TYPE_RATIO): RetrievedEntityChunk[] {
   const maxPerType = Math.max(1, Math.ceil(results.length * maxRatio));
   const counts = new Map<string, number>();
-  const kept: RetrievedPersonChunk[] = [];
+  const kept: RetrievedEntityChunk[] = [];
 
   for (const r of results) {
     const type = r.entityType ?? 'unknown';
@@ -184,9 +184,9 @@ function enforceTypeDiversity(results: RetrievedPersonChunk[], maxRatio = MAX_TY
   return kept;
 }
 
-function capPerPage(results: RetrievedPersonChunk[], maxPerPage = MAX_PER_PAGE): RetrievedPersonChunk[] {
+function capPerPage(results: RetrievedEntityChunk[], maxPerPage = MAX_PER_PAGE): RetrievedEntityChunk[] {
   const counts = new Map<string, number>();
-  const kept: RetrievedPersonChunk[] = [];
+  const kept: RetrievedEntityChunk[] = [];
   for (const r of results) {
     const count = counts.get(r.slug) ?? 0;
     if (count < maxPerPage) {
@@ -197,7 +197,7 @@ function capPerPage(results: RetrievedPersonChunk[], maxPerPage = MAX_PER_PAGE):
   return kept;
 }
 
-function guaranteeCompiledTruth(results: RetrievedPersonChunk[], preDedup: RetrievedPersonChunk[]): RetrievedPersonChunk[] {
+function guaranteeCompiledTruth(results: RetrievedEntityChunk[], preDedup: RetrievedEntityChunk[]): RetrievedEntityChunk[] {
   const output = [...results];
   const pages = [...new Set(results.map((r) => r.slug))];
 
@@ -223,7 +223,7 @@ function guaranteeCompiledTruth(results: RetrievedPersonChunk[], preDedup: Retri
   return output;
 }
 
-function dedupResults(results: RetrievedPersonChunk[]): RetrievedPersonChunk[] {
+function dedupResults(results: RetrievedEntityChunk[]): RetrievedEntityChunk[] {
   const preDedup = [...results];
   let deduped = dedupBySource(results);
   deduped = dedupByTextSimilarity(deduped);
@@ -247,7 +247,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
-function cosineReScore(results: RetrievedPersonChunk[], queryVector: number[]): RetrievedPersonChunk[] {
+function cosineReScore(results: RetrievedEntityChunk[], queryVector: number[]): RetrievedEntityChunk[] {
   if (results.length === 0) return results;
   const maxRrf = Math.max(...results.map((r) => r.score ?? 0));
 
@@ -281,7 +281,7 @@ function getBacklinkCounts(db: Database, slugs: string[]): Map<string, number> {
   return counts;
 }
 
-function applyBacklinkBoost(results: RetrievedPersonChunk[], counts: Map<string, number>): RetrievedPersonChunk[] {
+function applyBacklinkBoost(results: RetrievedEntityChunk[], counts: Map<string, number>): RetrievedEntityChunk[] {
   return results
     .map((r) => {
       const count = counts.get(r.slug) ?? 0;
@@ -294,9 +294,9 @@ function applyBacklinkBoost(results: RetrievedPersonChunk[], counts: Map<string,
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
 
-function normalizeChunkScores(chunks: RetrievedPersonChunk[]): RetrievedPersonChunk[] {
+function normalizeChunkScores(chunks: RetrievedEntityChunk[]): RetrievedEntityChunk[] {
   if (chunks.length === 0) return [];
-  const scored = chunks.filter((c) => typeof c.score === 'number') as Array<RetrievedPersonChunk & { score: number }>;
+  const scored = chunks.filter((c) => typeof c.score === 'number') as Array<RetrievedEntityChunk & { score: number }>;
   if (scored.length === 0) return chunks;
 
   const min = Math.min(...scored.map((c) => c.score));
@@ -308,7 +308,7 @@ function normalizeChunkScores(chunks: RetrievedPersonChunk[]): RetrievedPersonCh
   });
 }
 
-async function ftsKeywordSearch(db: Database, query: string, limit: number): Promise<RetrievedPersonChunk[]> {
+async function ftsKeywordSearch(db: Database, query: string, limit: number): Promise<RetrievedEntityChunk[]> {
   // Use FTS5 for fast keyword matching instead of loading all chunks into memory.
   // Note: FTS5 MATCH does not support ? parameter binding in bun:sqlite, use interpolation.
   // FTS5 query syntax: tokens separated by space = AND, OR between groups with OR keyword.
@@ -334,14 +334,14 @@ async function ftsKeywordSearch(db: Database, query: string, limit: number): Pro
         title: row.title ?? '',
         score: row.rank != null ? -row.rank : 0,
         metadata: {},
-      } satisfies RetrievedPersonChunk));
+      } satisfies RetrievedEntityChunk));
   } catch {
     return [];
   }
 }
 
 /** Fallback: load all scope chunks from LanceDB (used when no SQLite db is available). */
-async function fetchScopeChunksFallback(): Promise<RetrievedPersonChunk[]> {
+async function fetchScopeChunksFallback(): Promise<RetrievedEntityChunk[]> {
   const table = await getSharedTable();
   const rows = await table
     .query()
@@ -361,15 +361,15 @@ async function fetchScopeChunksFallback(): Promise<RetrievedPersonChunk[]> {
       chunkSource: typeof metadata.chunk_source === 'string' ? metadata.chunk_source : undefined,
       metadata,
       vector: Array.isArray(row.vector) ? row.vector : undefined,
-    } satisfies RetrievedPersonChunk;
+    } satisfies RetrievedEntityChunk;
   });
 }
 
-async function retrievePersonChunksWithVector(
+async function retrieveEntityChunksWithVector(
   query: string,
   queryVector: number[],
   options: { limit?: number } = {},
-): Promise<RetrievedPersonChunk[]> {
+): Promise<RetrievedEntityChunk[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
 
@@ -397,23 +397,23 @@ async function retrievePersonChunksWithVector(
       chunkSource: typeof metadata.chunk_source === 'string' ? metadata.chunk_source : undefined,
       metadata,
       vector: Array.isArray(row.vector) ? row.vector : undefined,
-    } satisfies RetrievedPersonChunk;
+    } satisfies RetrievedEntityChunk;
   }));
 }
 
-export async function retrievePersonChunks(
+export async function retrieveEntityChunks(
   query: string,
   options: { limit?: number } = {},
-): Promise<RetrievedPersonChunk[]> {
+): Promise<RetrievedEntityChunk[]> {
   const embedder = new JinaEmbedder();
   const queryVector = await embedder.embedQuery(query.trim());
-  return retrievePersonChunksWithVector(query, queryVector, options);
+  return retrieveEntityChunksWithVector(query, queryVector, options);
 }
 
-export async function searchPersonChunks(
+export async function searchEntityChunks(
   query: string,
   options: { limit?: number; keywordLimit?: number; vectorLimit?: number; db?: Database; expansion?: boolean; expansionLimit?: number } = {},
-): Promise<RetrievedPersonChunk[]> {
+): Promise<RetrievedEntityChunk[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
 
@@ -425,14 +425,14 @@ export async function searchPersonChunks(
   const embedder = new JinaEmbedder();
   const queryVector = await embedder.embedQuery(trimmed);
 
-  const vectorLists: RetrievedPersonChunk[][] = [];
+  const vectorLists: RetrievedEntityChunk[][] = [];
   for (const q of queries) {
     const qVector = q === trimmed ? queryVector : await embedder.embedQuery(q);
-    vectorLists.push(await retrievePersonChunksWithVector(q, qVector, { limit: vectorLimit }));
+    vectorLists.push(await retrieveEntityChunksWithVector(q, qVector, { limit: vectorLimit }));
   }
 
   // Keyword search via FTS5 when db is available, otherwise fall back to in-memory scoring
-  const keywordLists: RetrievedPersonChunk[][] = [];
+  const keywordLists: RetrievedEntityChunk[][] = [];
   if (options.db) {
     for (const q of queries) {
       keywordLists.push(await ftsKeywordSearch(options.db, q, keywordLimit));
@@ -448,9 +448,9 @@ export async function searchPersonChunks(
     }
   }
 
-  const fused = new Map<string, RetrievedPersonChunk>();
+  const fused = new Map<string, RetrievedEntityChunk>();
   const vectorByKey = new Map(vectorLists.flat().map((chunk) => [chunkKey(chunk), chunk]));
-  const applyRrf = (chunks: RetrievedPersonChunk[], source: 'vector' | 'keyword') => {
+  const applyRrf = (chunks: RetrievedEntityChunk[], source: 'vector' | 'keyword') => {
     chunks.forEach((chunk, index) => {
       const key = chunkKey(chunk);
       const existing = fused.get(key);
@@ -492,18 +492,18 @@ export async function searchPersonChunks(
   return dedupResults(results).slice(0, limit);
 }
 
-export async function retrievePersonPages(
+export async function retrieveEntityPages(
   query: string,
   options: { limit?: number; chunkLimit?: number; snippetsPerPage?: number; db?: Database; expansion?: boolean; expansionLimit?: number } = {},
-): Promise<RetrievedPersonPage[]> {
+): Promise<RetrievedEntityPage[]> {
   const pageLimit = options.limit ?? 5;
   const chunkLimit = options.chunkLimit ?? Math.max(pageLimit * 4, 8);
   const snippetsPerPage = options.snippetsPerPage ?? 2;
 
-  const chunks = await searchPersonChunks(query, { limit: chunkLimit, db: options.db, expansion: options.expansion, expansionLimit: options.expansionLimit });
+  const chunks = await searchEntityChunks(query, { limit: chunkLimit, db: options.db, expansion: options.expansion, expansionLimit: options.expansionLimit });
   if (chunks.length === 0) return [];
 
-  const grouped = new Map<string, RetrievedPersonPage>();
+  const grouped = new Map<string, RetrievedEntityPage>();
 
   chunks.forEach((chunk, index) => {
     const key = chunk.slug || chunk.id;
@@ -546,3 +546,11 @@ export async function retrievePersonPages(
     })
     .slice(0, pageLimit);
 }
+
+// Backward compat aliases
+/** @deprecated use retrieveEntityChunks */
+export const retrievePersonChunks = retrieveEntityChunks;
+/** @deprecated use searchEntityChunks */
+export const searchPersonChunks = searchEntityChunks;
+/** @deprecated use retrieveEntityPages */
+export const retrievePersonPages = retrieveEntityPages;

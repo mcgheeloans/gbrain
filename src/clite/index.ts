@@ -43,8 +43,15 @@ export type { FreshnessRow } from './freshness.ts';
 export { getEntityState } from './read-models.ts';
 export type { EntityState } from './read-models.ts';
 
+// Renderers
 export { renderPersonPage } from './render-person.ts';
 export type { RenderedPersonPage } from './render-person.ts';
+
+export { renderCompanyPage } from './render-company-page.ts';
+export type { RenderedCompanyPage } from './render-company-page.ts';
+
+export { renderProjectPage } from './render-project-page.ts';
+export type { RenderedProjectPage } from './render-project-page.ts';
 
 export { writePersonPage } from './write-page.ts';
 export type { WritePageResult } from './write-page.ts';
@@ -55,15 +62,24 @@ export {
 } from './ingest-note.ts';
 export type { IngestNoteResult } from './ingest-note.ts';
 
+// Compile
 export { compilePerson } from './compile-person.ts';
+export { compileEntity } from './compile-entity.ts';
 
 export { verifySlice, getLatestVerificationRun } from './verify-slice.ts';
 export type { VerifySliceResult, CheckResult, CheckStatus } from './verify-slice.ts';
 
+// Embeddings + LanceDB
 export { JinaEmbedder } from './embedder.ts';
-export { upsertPersonChunks, hasEntriesForSlug, getSharedTable } from './lance-store.ts';
+export { upsertEntityChunks, upsertPersonChunks, hasEntriesForSlug, getSharedTable } from './lance-store.ts';
 export { indexPersonPage, indexTopicChunks } from './index-person.ts';
 export { renderTopicChunks } from './render-topic-chunks.ts';
 export type { TopicChunk } from './render-topic-chunks.ts';
+
+// Retrieval (new names)
+export { retrieveEntityChunks, searchEntityChunks, retrieveEntityPages } from './retrieve-person.ts';
+export type { RetrievedEntityChunk, RetrievedEntityPage } from './retrieve-person.ts';
+
+// Retrieval (backward compat aliases)
 export { retrievePersonChunks, searchPersonChunks, retrievePersonPages } from './retrieve-person.ts';
 export type { RetrievedPersonChunk, RetrievedPersonPage } from './retrieve-person.ts';

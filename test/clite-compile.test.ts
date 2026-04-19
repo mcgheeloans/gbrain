@@ -212,12 +212,13 @@ describe('compile-person', () => {
     db.close();
   });
 
-  test('returns null for non-person entity type', async () => {
+  test('compileEntity handles company entity type successfully', async () => {
     const { db } = bootstrap(TEST_DB);
     ingestNote(db, DEMO_NOTE);
 
     const result = await compilePerson(db, 'companies/acme-corp', PAGES_DIR);
-    expect(result).toBeNull();
+    // compilePerson now aliases compileEntity which handles company types
+    expect(result).not.toBeNull();
     db.close();
   });
 
