@@ -221,4 +221,67 @@ describe('retrieve-person', () => {
     const pageResults = await retrievePersonPages('   ');
     expect(pageResults).toEqual([]);
   });
+
+  test('relationship intent prefers graph-linked people for founder queries at page level', async () => {
+    if (!process.env.JINA_API_KEY) {
+      expect(true).toBe(true);
+      return;
+    }
+
+    const { db } = bootstrap(TEST_DB);
+    upsertEntity(db, 'companies/forge-19', 'company', 'Forge');
+    upsertEntity(db, 'people/adam-lee-19', 'person', 'Adam Lee');
+    upsertEntity(db, 'people/frank-hernandez-31', 'person', 'Frank Hernandez');
+    insertTriple(db, { subjectSlug: 'companies/forge-19', predicate: 'founded_by', objectEntitySlug: 'people/adam-lee-19' });
+    insertTriple(db, { subjectSlug: 'people/adam-lee-19', predicate: 'works_at', objectEntitySlug: 'companies/forge-19' });
+
+    const { upsertEntityChunks } = await import('../src/clite/lance-store.ts');
+    await upsertEntityChunks({
+      slug: 'companies/forge-19',
+      title: 'Forge',
+      chunks: [
+        'Forge is a company building crypto infrastructure.',
+        'Forge was founded by Adam Lee.',
+      ],
+      vectors: [new Array(1024).fill(0.001), new Array(1024).fill(0.002)],
+      entityType: 'company',
+      chunkMetadata: [
+        { topic: 'info', label: 'Company Info', priority: 4 },
+        { topic: 'founding', label: 'Founding', priority: 9 },
+      ],
+    });
+    await upsertEntityChunks({
+      slug: 'people/adam-lee-19',
+      title: 'Adam Lee',
+      chunks: [
+        'Adam Lee founded Forge.',
+        'Adam Lee works at Forge.',
+      ],
+      vectors: [new Array(1024).fill(0.003), new Array(1024).fill(0.004)],
+      entityType: 'person',
+      chunkMetadata: [
+        { topic: 'projects', label: 'Projects & Initiatives', priority: 8 },
+        { topic: 'employment', label: 'Employment', priority: 10 },
+      ],
+    });
+    await upsertEntityChunks({
+      slug: 'people/frank-hernandez-31',
+      title: 'Frank Hernandez',
+      chunks: [
+        'Frank Hernandez is a founder and long-term thinker in crypto infrastructure.',
+      ],
+      vectors: [new Array(1024).fill(0.005)],
+      entityType: 'person',
+      chunkMetadata: [
+        { topic: 'projects', label: 'Projects & Initiatives', priority: 8 },
+      ],
+    });
+
+    const results = await retrievePersonPages('founder of Forge', { limit: 3, db, expansion: false });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]!.slug).toBe('people/adam-lee-19');
+
+    db.close();
+  });
 });

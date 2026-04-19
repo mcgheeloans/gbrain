@@ -308,6 +308,136 @@ function normalizeChunkScores(chunks: RetrievedEntityChunk[]): RetrievedEntityCh
   });
 }
 
+function detectQueryIntent(query: string): 'person_relation' | 'company_affiliation' | 'neutral' {
+  const q = query.toLowerCase();
+  const asksForPerson = /\b(who|founder|founded|invested|investor|advisor|employee|employees|works on|team)\b/.test(q);
+  const asksForCompany = /\b(company|employer|organization|where does .* work|where .* works)\b/.test(q);
+
+  if (asksForCompany) return 'company_affiliation';
+  if (asksForPerson) return 'person_relation';
+  return 'neutral';
+}
+
+function pageIntentMultiplier(entityType: string | undefined, intent: 'person_relation' | 'company_affiliation' | 'neutral'): number {
+  if (!entityType || intent === 'neutral') return 1;
+  if (intent === 'person_relation') {
+    if (entityType === 'person') return 1.35;
+    if (entityType === 'company') return 0.82;
+  }
+  if (intent === 'company_affiliation') {
+    if (entityType === 'company') return 1.35;
+    if (entityType === 'person') return 0.82;
+  }
+  return 1;
+}
+
+function chunkIntentMultiplier(chunk: RetrievedEntityChunk, intent: 'person_relation' | 'company_affiliation' | 'neutral'): number {
+  if (intent === 'neutral') return 1;
+
+  const entityType = chunk.entityType;
+  const topic = typeof chunk.metadata?.topic === 'string' ? String(chunk.metadata.topic) : '';
+  const text = chunk.text.toLowerCase();
+  let mult = 1;
+
+  if (intent === 'person_relation') {
+    if (entityType === 'person') mult *= 1.45;
+    if (entityType === 'company') mult *= 0.7;
+
+    if (topic === 'relationships' || topic === 'team' || topic === 'employment' || topic === 'founding') mult *= 1.2;
+    if (chunk.chunkSource === 'compiled_truth' && entityType === 'company') mult *= 0.75;
+    if (/\b(founded by|invested by|advisor|employee|team|works at|reports to|manages)\b/.test(text)) mult *= 1.15;
+  }
+
+  if (intent === 'company_affiliation') {
+    if (entityType === 'company') mult *= 1.45;
+    if (entityType === 'person') mult *= 0.72;
+
+    if (topic === 'employment' || topic === 'info' || topic === 'location' || topic === 'industry') mult *= 1.15;
+    if (chunk.chunkSource === 'compiled_truth' && entityType === 'company') mult *= 1.15;
+    if (/\b(company|organization|employer|works at|headquarters|industry)\b/.test(text)) mult *= 1.1;
+  }
+
+  return mult;
+}
+
+function detectRelationPredicates(query: string, intent: 'person_relation' | 'company_affiliation' | 'neutral'): string[] {
+  const q = query.toLowerCase();
+  if (intent === 'person_relation') {
+    if (/\b(founder|founded)\b/.test(q)) return ['founders', 'founded_by', 'founded'];
+    if (/\b(invested|investor)\b/.test(q)) return ['investors', 'invested_in'];
+    if (/\b(advisor|advisors)\b/.test(q)) return ['advisors', 'advisor_to'];
+    if (/\b(employee|employees|team|works on)\b/.test(q)) return ['employees', 'works_at', 'primary_affiliation'];
+  }
+  if (intent === 'company_affiliation') {
+    if (/\b(company|employer|organization|where does .* work|where .* works)\b/.test(q)) {
+      return ['works_at', 'primary_affiliation'];
+    }
+  }
+  return [];
+}
+
+function inferReferencedEntitySlugs(db: Database, query: string): Array<{ slug: string; type: string; title: string }> {
+  const q = query.toLowerCase();
+  const entities = db.query(
+    `SELECT slug, type, title FROM entities ORDER BY length(title) DESC`
+  ).all() as Array<{ slug: string; type: string; title: string }>;
+
+  return entities.filter((e) => {
+    const title = e.title.toLowerCase();
+    return title.length >= 3 && q.includes(title);
+  });
+}
+
+function getGraphLinkedSlugs(
+  db: Database,
+  query: string,
+  intent: 'person_relation' | 'company_affiliation' | 'neutral',
+): Set<string> {
+  const predicates = detectRelationPredicates(query, intent);
+  if (predicates.length === 0) return new Set();
+
+  const mentioned = inferReferencedEntitySlugs(db, query);
+  if (mentioned.length === 0) return new Set();
+
+  const referencedPeople = mentioned.filter((e) => e.type === 'person').map((e) => e.slug);
+  const referencedCompanies = mentioned.filter((e) => e.type === 'company').map((e) => e.slug);
+  const linked = new Set<string>();
+
+  if (intent === 'person_relation' && referencedCompanies.length > 0) {
+    const placeholdersA = referencedCompanies.map(() => '?').join(', ');
+    const placeholdersB = predicates.map(() => '?').join(', ');
+    const rows = db.query(
+      `SELECT object_entity_slug as slug
+       FROM triples
+       WHERE subject_entity_slug IN (${placeholdersA})
+         AND predicate IN (${placeholdersB})
+         AND object_entity_slug IS NOT NULL
+         AND status = 'current' AND valid_to IS NULL`
+    ).all(...referencedCompanies, ...predicates) as Array<{ slug: string | null }>;
+    for (const row of rows) {
+      if (row.slug) linked.add(row.slug);
+    }
+  }
+
+  if (intent === 'company_affiliation' && referencedPeople.length > 0) {
+    const placeholdersA = referencedPeople.map(() => '?').join(', ');
+    const placeholdersB = predicates.map(() => '?').join(', ');
+    const rows = db.query(
+      `SELECT object_entity_slug as slug
+       FROM triples
+       WHERE subject_entity_slug IN (${placeholdersA})
+         AND predicate IN (${placeholdersB})
+         AND object_entity_slug IS NOT NULL
+         AND status = 'current' AND valid_to IS NULL`
+    ).all(...referencedPeople, ...predicates) as Array<{ slug: string | null }>;
+    for (const row of rows) {
+      if (row.slug) linked.add(row.slug);
+    }
+  }
+
+  return linked;
+}
+
 async function ftsKeywordSearch(db: Database, query: string, limit: number): Promise<RetrievedEntityChunk[]> {
   // Use FTS5 for fast keyword matching instead of loading all chunks into memory.
   // Note: FTS5 MATCH does not support ? parameter binding in bun:sqlite, use interpolation.
@@ -421,6 +551,7 @@ export async function searchEntityChunks(
   const vectorLimit = options.vectorLimit ?? Math.max(limit * 2, 8);
   const keywordLimit = options.keywordLimit ?? Math.max(limit * 3, 12);
   const queries = options.expansion === false ? [trimmed] : await expandQueryTermsLlm(trimmed, options.expansionLimit);
+  const intent = detectQueryIntent(trimmed);
 
   const embedder = new JinaEmbedder();
   const queryVector = await embedder.embedQuery(trimmed);
@@ -479,12 +610,23 @@ export async function searchEntityChunks(
     if (topicPriority >= 8) {
       score *= 1.2; // 20% boost for high-priority topics
     }
+    score *= chunkIntentMultiplier(chunk, intent);
     return { ...chunk, score };
   });
 
   results = cosineReScore(results, queryVector);
 
   if (options.db) {
+    const linkedSlugs = getGraphLinkedSlugs(options.db, trimmed, intent);
+    if (linkedSlugs.size > 0) {
+      results = results
+        .map((chunk) => ({
+          ...chunk,
+          score: (chunk.score ?? 0) * (linkedSlugs.has(chunk.slug) ? 1.75 : 0.9),
+        }))
+        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    }
+
     const counts = getBacklinkCounts(options.db, [...new Set(results.map((r) => r.slug))]);
     results = applyBacklinkBoost(results, counts);
   }
@@ -499,6 +641,7 @@ export async function retrieveEntityPages(
   const pageLimit = options.limit ?? 5;
   const chunkLimit = options.chunkLimit ?? Math.max(pageLimit * 4, 8);
   const snippetsPerPage = options.snippetsPerPage ?? 2;
+  const intent = detectQueryIntent(query);
 
   const chunks = await searchEntityChunks(query, { limit: chunkLimit, db: options.db, expansion: options.expansion, expansionLimit: options.expansionLimit });
   if (chunks.length === 0) return [];
@@ -509,6 +652,7 @@ export async function retrieveEntityPages(
     const key = chunk.slug || chunk.id;
     const existing = grouped.get(key);
     const reciprocalRank = 1 / (index + 1);
+    const weightedRank = reciprocalRank * pageIntentMultiplier(chunk.entityType, intent);
 
     if (!existing) {
       grouped.set(key, {
@@ -516,7 +660,7 @@ export async function retrieveEntityPages(
         title: chunk.title,
         entityType: chunk.entityType,
         bestScore: chunk.score,
-        fusedScore: reciprocalRank,
+        fusedScore: weightedRank,
         chunkCount: 1,
         snippets: [chunk.text],
         chunks: [chunk],
@@ -524,7 +668,7 @@ export async function retrieveEntityPages(
       return;
     }
 
-    existing.fusedScore += reciprocalRank;
+    existing.fusedScore += weightedRank;
     existing.chunkCount += 1;
     existing.chunks.push(chunk);
     if (typeof chunk.score === 'number') {
