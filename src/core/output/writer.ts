@@ -132,6 +132,22 @@ class WriteTxImpl implements WriteTx {
     if (!input.desiredSlug || !input.displayName || !input.type) {
       throw new WriteError('invalid_input', 'createEntity requires desiredSlug, displayName, and type');
     }
+    // Cross-process TOCTOU guard: take a transaction-scoped advisory lock
+    // keyed on the desired slug prefix so two putPage('people/alice') calls
+    // from separate processes serialize at the DB level. The second caller's
+    // slugRegistry.create() then observes the first's write and disambiguates.
+    // PGLite is single-process so this is a harmless no-op there.
+    try {
+      await this.engine.executeRaw(
+        `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+        [input.desiredSlug],
+      );
+    } catch {
+      // Some engines/test doubles may not support advisory locks. Fall
+      // through — within-process collisions are still caught by the existing
+      // getPage() check, and this only reduces protection against
+      // cross-process races (which don't exist on embedded engines anyway).
+    }
     const { slug } = await this.slugRegistry.create({
       desiredSlug: input.desiredSlug,
       displayName: input.displayName,
