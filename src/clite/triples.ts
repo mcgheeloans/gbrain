@@ -16,6 +16,9 @@ export interface TripleRow {
   confidence: number;
   source_type: string;
   source_ref: string;
+  link_source: string;
+  origin_slug: string | null;
+  origin_field: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -27,55 +30,51 @@ export interface InsertTripleInput {
   objectLiteral?: string;
   sourceType?: string;
   sourceRef?: string;
+  linkSource?: string;
+  originSlug?: string;
+  originField?: string;
   confidence?: number;
   context?: string;
 }
 
-/**
- * Insert a triple. For the first slice, we handle dedup via the unique index.
- * If an identical current triple exists, bumps updated_at instead of erroring.
- */
-export function insertTriple(
-  db: Database,
-  input: InsertTripleInput
-): TripleRow {
+export function insertTriple(db: Database, input: InsertTripleInput): TripleRow {
   const {
-    subjectSlug,
-    predicate,
-    objectEntitySlug = null,
-    objectLiteral = null,
-    sourceType = 'user',
-    sourceRef = '',
-    confidence = 1.0,
-    context = null,
+    subjectSlug, predicate,
+    objectEntitySlug = null, objectLiteral = null,
+    sourceType = 'user', sourceRef = '',
+    linkSource = 'manual', originSlug = null, originField = null,
+    confidence = 1.0, context = null,
   } = input;
 
   if (!objectEntitySlug && !objectLiteral) {
-    throw new Error('Triple must have either objectEntitySlug or objectLiteral — neither provided');
+    throw new Error('Triple must have either objectEntitySlug or objectLiteral');
   }
-
   if (objectEntitySlug && objectLiteral) {
-    throw new Error('Triple must have either objectEntitySlug or objectLiteral — both provided, which is ambiguous');
+    throw new Error('Triple must have either objectEntitySlug or objectLiteral, not both');
   }
 
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
-  // Supersede any existing current triple with the same subject+predicate+object+status
-  // For first slice: just insert. Dedup index handles conflicts via ON CONFLICT.
   db.prepare(
     `INSERT INTO triples (subject_entity_slug, predicate, object_entity_slug, object_literal,
-       status, confidence, source_type, source_ref, context, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'current', ?, ?, ?, ?, ?, ?)
+       status, confidence, source_type, source_ref, link_source, origin_slug, origin_field,
+       context, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'current', ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(subject_entity_slug, predicate, COALESCE(object_entity_slug, ''),
-                 COALESCE(object_literal, ''), status, COALESCE(valid_to, ''))
+                 COALESCE(object_literal, ''), status, COALESCE(valid_to, ''),
+                 link_source, COALESCE(origin_field, ''))
      DO UPDATE SET
        confidence = excluded.confidence,
        source_type = excluded.source_type,
        source_ref = excluded.source_ref,
+       link_source = excluded.link_source,
+       origin_slug = excluded.origin_slug,
+       origin_field = excluded.origin_field,
        context = CASE WHEN excluded.context IS NOT NULL THEN excluded.context ELSE triples.context END,
        updated_at = excluded.updated_at`
   ).run(subjectSlug, predicate, objectEntitySlug, objectLiteral,
-        confidence, sourceType, sourceRef, context, now, now);
+        confidence, sourceType, sourceRef, linkSource, originSlug, originField,
+        context, now, now);
 
   return getLatestTriple(db, subjectSlug, predicate)!;
 }
@@ -88,30 +87,31 @@ function getLatestTriple(db: Database, subjectSlug: string, predicate: string): 
   ).get(subjectSlug, predicate) as TripleRow | null;
 }
 
-/**
- * Get all current triples involving an entity (as subject or object).
- */
 export function getTriplesForEntity(
-  db: Database,
-  entitySlug: string,
-  role: 'subject' | 'object' | 'both' = 'both'
+  db: Database, entitySlug: string, role: 'subject' | 'object' | 'both' = 'both'
 ): TripleRow[] {
   if (role === 'subject') {
     return db.query(
-      `SELECT * FROM triples WHERE subject_entity_slug = ? AND status = 'current' AND valid_to IS NULL
-       ORDER BY predicate`
+      `SELECT * FROM triples WHERE subject_entity_slug = ? AND status = 'current' AND valid_to IS NULL ORDER BY predicate`
     ).all(entitySlug) as TripleRow[];
   }
   if (role === 'object') {
     return db.query(
-      `SELECT * FROM triples WHERE object_entity_slug = ? AND status = 'current' AND valid_to IS NULL
-       ORDER BY predicate`
+      `SELECT * FROM triples WHERE object_entity_slug = ? AND status = 'current' AND valid_to IS NULL ORDER BY predicate`
     ).all(entitySlug) as TripleRow[];
   }
   return db.query(
-    `SELECT * FROM triples
-     WHERE (subject_entity_slug = ? OR object_entity_slug = ?)
-       AND status = 'current' AND valid_to IS NULL
-     ORDER BY predicate`
+    `SELECT * FROM triples WHERE (subject_entity_slug = ? OR object_entity_slug = ?) AND status = 'current' AND valid_to IS NULL ORDER BY predicate`
   ).all(entitySlug, entitySlug) as TripleRow[];
+}
+
+/**
+ * Remove frontmatter-originated triples for a given page slug.
+ * Used during re-ingestion to reconcile stale frontmatter edges.
+ */
+export function removeFrontmatterTriples(db: Database, originSlug: string): number {
+  const result = db.prepare(
+    `DELETE FROM triples WHERE origin_slug = ? AND link_source = 'frontmatter'`
+  ).run(originSlug);
+  return result.changes;
 }

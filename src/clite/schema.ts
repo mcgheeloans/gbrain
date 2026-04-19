@@ -70,13 +70,17 @@ CREATE TABLE IF NOT EXISTS triples (
   confidence          REAL    NOT NULL DEFAULT 1.0,
   source_type         TEXT    NOT NULL DEFAULT '',           -- user|llm|import|manual|...
   source_ref          TEXT    NOT NULL DEFAULT '',           -- URL, model name, file path, etc.
+  link_source         TEXT    NOT NULL DEFAULT 'manual',     -- manual|frontmatter|markdown|auto
+  origin_slug         TEXT,                                   -- slug of the page that created this edge
+  origin_field        TEXT,                                   -- frontmatter field name (e.g. 'company', 'investors')
   created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT    NOT NULL DEFAULT (datetime('now')),
   CONSTRAINT chk_triple_object CHECK (
     (object_entity_slug IS NOT NULL AND object_literal IS NULL)
     OR
     (object_entity_slug IS NULL AND object_literal IS NOT NULL)
-  )
+  ),
+  CONSTRAINT chk_link_source CHECK (link_source IN ('manual', 'frontmatter', 'markdown', 'auto'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_triples_subject ON triples(subject_entity_slug);
@@ -84,8 +88,10 @@ CREATE INDEX IF NOT EXISTS idx_triples_predicate ON triples(predicate);
 CREATE INDEX IF NOT EXISTS idx_triples_object_entity ON triples(object_entity_slug);
 CREATE INDEX IF NOT EXISTS idx_triples_status ON triples(status);
 CREATE INDEX IF NOT EXISTS idx_triples_validity ON triples(valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_triples_link_source ON triples(link_source);
+CREATE INDEX IF NOT EXISTS idx_triples_origin_slug ON triples(origin_slug);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_triples_dedup ON triples(
-  subject_entity_slug, predicate, COALESCE(object_entity_slug, ''), COALESCE(object_literal, ''), status, COALESCE(valid_to, '')
+  subject_entity_slug, predicate, COALESCE(object_entity_slug, ''), COALESCE(object_literal, ''), status, COALESCE(valid_to, ''), link_source, COALESCE(origin_field, '')
 );
 
 -- ============================================================
@@ -163,7 +169,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS person_chunks_fts USING fts5(
 );
 
 INSERT OR IGNORE INTO clite_meta (key, value) VALUES
-  ('schema_version', '2'),
+  ('schema_version', '3'),
   ('engine', 'clite-sqlite');
 
 -- ============================================================

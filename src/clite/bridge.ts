@@ -26,6 +26,8 @@ import { insertTriple } from './triples.ts';
 import { appendTimelineEvent } from './timeline.ts';
 import { recomputeFreshness } from './freshness.ts';
 import { compileEntity } from './compile-entity.ts';
+import { extractFrontmatterLinks } from './frontmatter-links.ts';
+import { removeFrontmatterTriples } from './triples.ts';
 
 // ── Public types ───────────────────────────────────────────────────────
 
@@ -55,6 +57,8 @@ export interface BridgeInput {
   entities: BridgeEntityInput[];
   triples: BridgeTripleInput[];
   timeline: BridgeTimelineInput[];
+  frontmatter?: Record<string, unknown>;
+  sourceSlug?: string;
   sourceRef?: string;
 }
 
@@ -70,6 +74,8 @@ export interface BridgeResult {
     entitySlugs: string[];
     tripleCount: number;
     timelineCount: number;
+    frontmatterLinks: number;
+    unresolved: Array<{ name: string; field: string; dirHint: string }>;
     error?: string;
   };
   projections: {
@@ -112,6 +118,8 @@ function emptyResult(): BridgeResult {
       entitySlugs: [],
       tripleCount: 0,
       timelineCount: 0,
+      frontmatterLinks: 0,
+      unresolved: [],
     },
     projections: {
       compiled: emptyProjectionStatus(),
@@ -138,8 +146,8 @@ export async function bridge(
 ): Promise<BridgeResult> {
   const { entities, triples, timeline } = input;
 
-  // Early return for empty input
-  if (entities.length === 0 && triples.length === 0 && timeline.length === 0) {
+  // Early return for empty input (but not if frontmatter is provided)
+  if (entities.length === 0 && triples.length === 0 && timeline.length === 0 && !input.frontmatter) {
     return emptyResult();
   }
 
@@ -185,6 +193,31 @@ export async function bridge(
           sourceRef: input.sourceRef ?? '',
         });
         affectedSlugs.add(te.entitySlug);
+      }
+
+      // Frontmatter link extraction (v0.13)
+      // Reconcile: remove old frontmatter edges for this page, then insert new ones
+      const sourceSlug = input.sourceSlug ?? (entities.length > 0 ? entities[0].slug : undefined);
+      if (sourceSlug && input.frontmatter) {
+        removeFrontmatterTriples(db, sourceSlug);
+        const { resolved, unresolved } = extractFrontmatterLinks(
+          sourceSlug, input.frontmatter, db
+        );
+        for (const link of resolved) {
+          insertTriple(db, {
+            subjectSlug: link.subjectSlug,
+            predicate: link.predicate,
+            objectEntitySlug: link.objectSlug,
+            linkSource: 'frontmatter',
+            originSlug: sourceSlug,
+            originField: link.originField,
+            sourceRef: input.sourceRef ?? 'frontmatter',
+          });
+          affectedSlugs.add(link.subjectSlug);
+          affectedSlugs.add(link.objectSlug);
+        }
+        result.canonical.frontmatterLinks = resolved.length;
+        result.canonical.unresolved = unresolved;
       }
 
       // Recompute freshness for all affected slugs that exist in the DB
