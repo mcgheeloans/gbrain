@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import { unlinkSync } from 'node:fs';
 import { bootstrap } from '../src/clite/bootstrap.ts';
-import { bridge, commitCanonical, commitAndProject } from '../src/clite/bridge.ts';
+import { bridge, commitCanonical, commitAndProject, isEntitySlug } from '../src/clite/bridge.ts';
 import type { BridgeInput } from '../src/clite/bridge.ts';
 import { getEntityBySlug } from '../src/clite/entities.ts';
 import { getTriplesForEntity } from '../src/clite/triples.ts';
@@ -360,5 +360,18 @@ describe('bridge', () => {
     expect(freshness.freshness_reason).toBe('never compiled');
 
     db.close();
+  });
+
+  test('isEntitySlug routes entity vs non-entity pages correctly', () => {
+    // Entity slugs → true
+    expect(isEntitySlug('people/sarah-chen')).toBe(true);
+    expect(isEntitySlug('companies/acme-corp')).toBe(true);
+    expect(isEntitySlug('projects/rebrand-2024')).toBe(true);
+
+    // Non-entity slugs → false
+    expect(isEntitySlug('meetings/board-q1')).toBe(false);
+    expect(isEntitySlug('notes/something')).toBe(false);
+    expect(isEntitySlug('random-page')).toBe(false);
+    expect(isEntitySlug('people')).toBe(false); // prefix but not a slug
   });
 });

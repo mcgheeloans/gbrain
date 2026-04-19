@@ -3,6 +3,21 @@
  * SQLite sidecar, and optionally triggers projection (compile + index).
  *
  * Key invariant: projection failure must NEVER roll back canonical writes.
+ *
+ * ## put_page routing decision (Phase 3)
+ *
+ * Entity-shaped content (people/..., companies/..., projects/...):
+ *   → This bridge: canonical commit + compile + index
+ *   → compileEntity returns WritePageResult or null for unknown types
+ *
+ * Non-entity content (meetings/..., notes/..., etc.):
+ *   → Core put_page operation (importFromContent): chunk + embed + reconcile
+ *   → Does NOT go through this bridge — no canonical truth, no projection
+ *   → Stored as compatibility pages with standard search indexing
+ *
+ * This split exists because canonical truth requires entity-shaped data
+ * (triples, timeline, structured aliases). Non-entity pages don't have
+ * that structure and don't need canonical projection.
  */
 
 import type { Database } from 'bun:sqlite';
@@ -67,6 +82,21 @@ export interface BridgeOptions {
   compile?: boolean;   // Run compile after canonical commit. Default: false
   index?: boolean;     // Run retrieval indexing. Default: same as compile
   pagesDir?: string;   // Pages output directory. Default: 'pages'
+}
+
+// ── Page routing (Phase 3) ───────────────────────────────────────────
+
+const ENTITY_TYPE_PREFIXES = ['people/', 'companies/', 'projects/'] as const;
+
+/**
+ * Determine whether a page slug should be routed through the entity bridge
+ * or handled by the generic put_page path.
+ *
+ * Entity slugs: people/*, companies/*, projects/* → canonical + projection
+ * Non-entity slugs: everything else → generic put_page (chunk + embed)
+ */
+export function isEntitySlug(slug: string): boolean {
+  return ENTITY_TYPE_PREFIXES.some((prefix) => slug.startsWith(prefix));
 }
 
 // ── Empty result helpers ───────────────────────────────────────────────
