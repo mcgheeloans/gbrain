@@ -69,6 +69,102 @@ export function recomputeFreshness(db: Database, entitySlug: string): FreshnessR
   return db.query('SELECT * FROM entity_freshness WHERE entity_slug = ?').get(entitySlug) as FreshnessRow;
 }
 
+// ── Projection-status helpers ────────────────────────────────────────
+
+/**
+ * Mark wiki page projection as current for an entity.
+ */
+export function markPageProjected(db: Database, entitySlug: string): void {
+  const row = db.query("SELECT datetime('now') as ts").get() as any;
+  db.prepare(
+    `INSERT INTO entity_freshness (entity_slug, page_projected_at, last_projection_error, stale, freshness_reason)
+     VALUES (?, ?, NULL, 0, '')
+     ON CONFLICT(entity_slug) DO UPDATE SET
+       page_projected_at = excluded.page_projected_at,
+       last_projection_error = NULL`
+  ).run(entitySlug, row.ts);
+}
+
+/**
+ * Mark retrieval (LanceDB) projection as current for an entity.
+ */
+export function markRetrievalProjected(db: Database, entitySlug: string): void {
+  const row = db.query("SELECT datetime('now') as ts").get() as any;
+  db.prepare(
+    `INSERT INTO entity_freshness (entity_slug, retrieval_projected_at, last_projection_error, stale, freshness_reason)
+     VALUES (?, ?, NULL, 0, '')
+     ON CONFLICT(entity_slug) DO UPDATE SET
+       retrieval_projected_at = excluded.retrieval_projected_at,
+       last_projection_error = NULL`
+  ).run(entitySlug, row.ts);
+}
+
+/**
+ * Mark FTS projection as current for an entity.
+ */
+export function markFtsProjected(db: Database, entitySlug: string): void {
+  const row = db.query("SELECT datetime('now') as ts").get() as any;
+  db.prepare(
+    `INSERT INTO entity_freshness (entity_slug, fts_projected_at, last_projection_error, stale, freshness_reason)
+     VALUES (?, ?, NULL, 0, '')
+     ON CONFLICT(entity_slug) DO UPDATE SET
+       fts_projected_at = excluded.fts_projected_at,
+       last_projection_error = NULL`
+  ).run(entitySlug, row.ts);
+}
+
+/**
+ * Record a projection error for an entity (does not affect stale flag).
+ */
+export function recordProjectionError(db: Database, entitySlug: string, error: string): void {
+  db.prepare(
+    `INSERT INTO entity_freshness (entity_slug, last_projection_error, stale, freshness_reason)
+     VALUES (?, ?, 1, 'projection error')
+     ON CONFLICT(entity_slug) DO UPDATE SET
+       last_projection_error = excluded.last_projection_error`
+  ).run(entitySlug, error);
+}
+
+export interface ProjectionStaleness {
+  entitySlug: string;
+  stale: boolean;
+  pageStale: boolean;
+  retrievalStale: boolean;
+  ftsStale: boolean;
+}
+
+/**
+ * Return entities where any projection is missing or stale.
+ * pageStale: page_projected_at IS NULL but entity has canonical data.
+ * retrievalStale: retrieval_projected_at IS NULL but page_projected_at IS NOT NULL.
+ * ftsStale: fts_projected_at IS NULL but page_projected_at IS NOT NULL.
+ */
+export function getStaleProjections(db: Database): ProjectionStaleness[] {
+  const rows = db.query(`
+    SELECT
+      e.slug as entity_slug,
+      COALESCE(f.stale, 0) as stale,
+      CASE WHEN f.page_projected_at IS NULL THEN 1 ELSE 0 END as page_stale,
+      CASE WHEN f.page_projected_at IS NOT NULL AND f.retrieval_projected_at IS NULL THEN 1 ELSE 0 END as retrieval_stale,
+      CASE WHEN f.page_projected_at IS NOT NULL AND f.fts_projected_at IS NULL THEN 1 ELSE 0 END as fts_stale
+    FROM entities e
+    LEFT JOIN entity_freshness f ON f.entity_slug = e.slug
+    WHERE
+      COALESCE(f.stale, 0) = 1
+      OR f.page_projected_at IS NULL
+      OR (f.page_projected_at IS NOT NULL AND f.retrieval_projected_at IS NULL)
+      OR (f.page_projected_at IS NOT NULL AND f.fts_projected_at IS NULL)
+  `).all() as Array<{ entity_slug: string; stale: number; page_stale: number; retrieval_stale: number; fts_stale: number }>;
+
+  return rows.map((r) => ({
+    entitySlug: r.entity_slug,
+    stale: r.stale === 1,
+    pageStale: r.page_stale === 1,
+    retrievalStale: r.retrieval_stale === 1,
+    ftsStale: r.fts_stale === 1,
+  }));
+}
+
 /**
  * Mark an entity as compiled (sets compiled_updated_at to now, clears stale).
  * Used later when compile is implemented.

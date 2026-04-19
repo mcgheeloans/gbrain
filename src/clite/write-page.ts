@@ -13,7 +13,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Database } from 'bun:sqlite';
 import type { RenderedPersonPage } from './render-person.ts';
-import { markCompiled } from './freshness.ts';
+import { markCompiled, markPageProjected } from './freshness.ts';
 
 export interface WritePageResult {
   /** Path of the written page */
@@ -56,6 +56,7 @@ export function writePersonPage(
   if (existing === page.content) {
     // Content unchanged — still mark compiled since we've confirmed it's current
     markCompiled(db, page.entitySlug);
+    markPageProjected(db, page.entitySlug);
     return { pagePath, written: false, contentHash: page.contentHash };
   }
 
@@ -64,6 +65,7 @@ export function writePersonPage(
 
   // Mark compiled only after successful write
   markCompiled(db, page.entitySlug);
+  markPageProjected(db, page.entitySlug);
 
   return { pagePath, written: true, contentHash: page.contentHash };
 }

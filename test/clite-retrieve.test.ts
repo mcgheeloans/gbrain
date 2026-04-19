@@ -12,23 +12,34 @@ const TEST_DB = '/tmp/gbrain-clite-retrieve-test.db';
 const PAGES_DIR = '/tmp/gbrain-clite-retrieve-test-pages';
 const DEMO_NOTE = 'Met Sarah Chen after the conference. She is a Senior Account Executive at Acme Corp. We discussed Q3 partnership expansion and she mentioned the renewal deadline is August 15th.';
 
+async function cleanupLance() {
+  if (!process.env.JINA_API_KEY) return;
+  try {
+    const { getSharedTable } = await import('../src/clite/lance-store.ts');
+    const table = await getSharedTable();
+    const testSlugs = [
+      'people/sarah-chen', 'companies/acme-corp',
+      'companies/forge-19', 'people/adam-lee-19', 'people/frank-hernandez-31',
+      'companies/vox-25', 'people/fiona-moore-88', 'people/noah-kapoor-15',
+      'people/alex-rivera', 'people/jordan-lee',
+    ];
+    for (const slug of testSlugs) {
+      try { await table.delete(`id LIKE '${slug}:%'`); } catch {}
+    }
+  } catch {}
+}
+
 async function cleanupAsync() {
   try { unlinkSync(TEST_DB); } catch {}
   try { unlinkSync(TEST_DB + '-wal'); } catch {}
   try { unlinkSync(TEST_DB + '-shm'); } catch {}
   try { rmSync(PAGES_DIR, { recursive: true }); } catch {}
-  if (process.env.JINA_API_KEY) {
-    try {
-      const { upsertPersonChunks } = await import('../src/clite/lance-store.ts');
-      await upsertPersonChunks({ slug: 'people/sarah-chen', title: 'Sarah Chen', chunks: [], vectors: [] });
-      await upsertPersonChunks({ slug: 'companies/acme-corp', title: 'Acme Corp', chunks: [], vectors: [] });
-    } catch {}
-  }
 }
 
 beforeEach(async () => {
   await cleanupAsync();
-});
+  await cleanupLance();
+}, { timeout: 15000 });
 
 afterAll(async () => {
   await cleanupAsync();
@@ -281,6 +292,64 @@ describe('retrieve-person', () => {
 
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]!.slug).toBe('people/adam-lee-19');
+
+    db.close();
+  });
+
+  test('investor queries prefer graph-linked people even when their own page text is noisy', async () => {
+    if (!process.env.JINA_API_KEY) {
+      expect(true).toBe(true);
+      return;
+    }
+
+    const { db } = bootstrap(TEST_DB);
+    upsertEntity(db, 'companies/vox-25', 'company', 'Vox');
+    upsertEntity(db, 'people/fiona-moore-88', 'person', 'Fiona Moore');
+    upsertEntity(db, 'people/noah-kapoor-15', 'person', 'Noah Kapoor');
+    insertTriple(db, { subjectSlug: 'companies/vox-25', predicate: 'investors', objectEntitySlug: 'people/fiona-moore-88' });
+
+    const { upsertEntityChunks } = await import('../src/clite/lance-store.ts');
+    await upsertEntityChunks({
+      slug: 'companies/vox-25',
+      title: 'Vox',
+      chunks: [
+        'Vox raised an angel round led by Fiona Moore.',
+      ],
+      vectors: [new Array(1024).fill(0.0055)],
+      entityType: 'company',
+      chunkMetadata: [
+        { topic: 'funding', label: 'Funding', priority: 9 },
+      ],
+    });
+    await upsertEntityChunks({
+      slug: 'people/fiona-moore-88',
+      title: 'Fiona Moore',
+      chunks: [
+        'Fiona Moore is an advisor to Vox and occasionally helps with product feedback.',
+      ],
+      vectors: [new Array(1024).fill(0.006)],
+      entityType: 'person',
+      chunkMetadata: [
+        { topic: 'relationships', label: 'Relationships & Team', priority: 8 },
+      ],
+    });
+    await upsertEntityChunks({
+      slug: 'people/noah-kapoor-15',
+      title: 'Noah Kapoor',
+      chunks: [
+        'Noah Kapoor is an active investor focused on developer tools and B2B infrastructure.',
+      ],
+      vectors: [new Array(1024).fill(0.007)],
+      entityType: 'person',
+      chunkMetadata: [
+        { topic: 'relationships', label: 'Relationships & Team', priority: 8 },
+      ],
+    });
+
+    const results = await retrievePersonPages('who invested in Vox', { limit: 3, db, expansion: false });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]!.slug).toBe('people/fiona-moore-88');;
 
     db.close();
   });

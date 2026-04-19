@@ -15,6 +15,7 @@ import type { TopicChunk } from './render-topic-chunks.ts';
 import { JinaEmbedder } from './embedder.ts';
 import { upsertEntityChunks } from './lance-store.ts';
 import type { Database } from 'bun:sqlite';
+import { markRetrievalProjected, markFtsProjected } from './freshness.ts';
 
 const CHUNK_SIZE = 500;
 const CHUNK_OVERLAP = 50;
@@ -63,9 +64,14 @@ export async function indexTopicChunks(
     })),
   });
 
+  if (options?.db) {
+    markRetrievalProjected(options.db, slug);
+  }
+
   // Sync to FTS5 for keyword search
   if (options?.db) {
     syncFtsChunks(options.db, slug, title, topicChunks.map((tc, i) => ({ index: i, text: tc.text })));
+    markFtsProjected(options.db, slug);
   }
 
   return chunks.length;

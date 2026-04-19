@@ -119,6 +119,10 @@ CREATE TABLE IF NOT EXISTS entity_freshness (
   compiled_updated_at      TEXT,                                      -- when the compiled entity was last written
   stale                    INTEGER NOT NULL DEFAULT 0,               -- 0=fresh, 1=stale
   freshness_reason         TEXT    NOT NULL DEFAULT '',               -- human-readable reason if stale
+  page_projected_at        TEXT,                                      -- when compiled wiki page was last written
+  retrieval_projected_at   TEXT,                                      -- when LanceDB chunks were last indexed
+  fts_projected_at         TEXT,                                      -- when FTS rows were last synced
+  last_projection_error    TEXT,                                      -- last error from any projection stage, NULL if clean
   CHECK (stale IN (0, 1))
 );
 

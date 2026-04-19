@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "queries": [
+    {
+      "query": "Adam Lee company",
+      "relevant": [
+        "companies/forge-19"
+      ]
+    },
+    {
+      "query": "where does Adam Lee work",
+      "relevant": [
+        "companies/forge-19"
+      ]
+    },
+    {
+      "query": "Priya Zhang company",
+      "relevant": [
+        "companies/zenith-27"
+      ]
+    },
+    {
+      "query": "where does Priya Zhang work",
+      "relevant": [
+        "companies/zenith-27"
+      ]
+    },
+    {
+      "query": "Mia Park company",
+      "relevant": [
+        "companies/iris-36"
+      ]
+    },
+    {
+      "query": "where does Mia Park work",
+      "relevant": [
+        "companies/iris-36"
+      ]
+    },
+    {
+      "query": "Tina Lopez company",
+      "relevant": [
+        "companies/quantum-7"
+      ]
+    },
+    {
+      "query": "where does Tina Lopez work",
+      "relevant": [
+        "companies/quantum-7"
+      ]
+    },
+    {
+      "query": "Ulrich Johnson company",
+      "relevant": [
+        "companies/quantum-7"
+      ]
+    },
+    {
+      "query": "where does Ulrich Johnson work",
+      "relevant": [
+        "companies/quantum-7"
+      ]
+    },
+    {
+      "query": "who founded Quantum",
+      "relevant": [
+        "people/ulrich-johnson-7"
+      ]
+    },
+    {
+      "query": "founder of Quantum",
+      "relevant": [
+        "people/ulrich-johnson-7"
+      ]
+    },
+    {
+      "query": "employee at Quantum",
+      "relevant": [
+        "people/tina-lopez-117"
+      ]
+    },
+    {
+      "query": "who founded Iris",
+      "relevant": [
+        "people/mia-park-36"
+      ]
+    },
+    {
+      "query": "founder of Iris",
+      "relevant": [
+        "people/mia-park-36"
+      ]
+    },
+    {
+      "query": "who invested in Spire",
+      "relevant": [
+        "people/wendy-hernandez-80",
+        "people/eric-martinez-93"
+      ]
+    },
+    {
+      "query": "who founded Forge",
+      "relevant": [
+        "people/adam-lee-19"
+      ]
+    },
+    {
+      "query": "founder of Forge",
+      "relevant": [
+        "people/adam-lee-19"
+      ]
+    },
+    {
+      "query": "advisor to Forge",
+      "relevant": [
+        "people/tara-jackson-173"
+      ]
+    },
+    {
+      "query": "who invested in Vox",
+      "relevant": [
+        "people/fiona-moore-88"
+      ]
+    },
+    {
+      "query": "who invested in Delta",
+      "relevant": [
+        "people/david-zhang-83"
+      ]
+    },
+    {
+      "query": "who founded Zenith",
+      "relevant": [
+        "people/priya-zhang-27"
+      ]
+    },
+    {
+      "query": "founder of Zenith",
+      "relevant": [
+        "people/priya-zhang-27"
+      ]
+    }
+  ]
+}

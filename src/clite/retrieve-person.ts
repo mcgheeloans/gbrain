@@ -388,6 +388,49 @@ function inferReferencedEntitySlugs(db: Database, query: string): Array<{ slug: 
   });
 }
 
+function exactEntityMentionMultiplier(
+  chunk: RetrievedEntityChunk,
+  mentioned: Array<{ slug: string; type: string; title: string }>,
+  intent: 'person_relation' | 'company_affiliation' | 'neutral',
+  predicates: string[],
+): number {
+  if (mentioned.length === 0 || intent === 'neutral') return 1;
+
+  const text = `${chunk.title} ${chunk.text}`.toLowerCase();
+  let mult = 1;
+
+  if (intent === 'person_relation') {
+    const companies = mentioned.filter((e) => e.type === 'company');
+    for (const company of companies) {
+      const companyTitle = company.title.toLowerCase();
+      if (companyTitle.length < 3) continue;
+      if (text.includes(companyTitle)) mult *= 1.35;
+      else if (chunk.entityType === 'person') mult *= 0.88;
+
+      if (predicates.includes('investors') || predicates.includes('invested_in')) {
+        if (/\b(invested|investor|backed|led the|portfolio)\b/.test(text) && text.includes(companyTitle)) mult *= 1.2;
+      }
+      if (predicates.includes('founders') || predicates.includes('founded_by') || predicates.includes('founded')) {
+        if (/\b(founder|founded|co-founded)\b/.test(text) && text.includes(companyTitle)) mult *= 1.2;
+      }
+      if (predicates.includes('advisors') || predicates.includes('advisor_to')) {
+        if (/\b(advisor|advises|advising)\b/.test(text) && text.includes(companyTitle)) mult *= 1.2;
+      }
+    }
+  }
+
+  if (intent === 'company_affiliation') {
+    const people = mentioned.filter((e) => e.type === 'person');
+    for (const person of people) {
+      const personTitle = person.title.toLowerCase();
+      if (personTitle.length < 3) continue;
+      if (text.includes(personTitle)) mult *= 1.2;
+    }
+  }
+
+  return mult;
+}
+
 function getGraphLinkedSlugs(
   db: Database,
   query: string,
@@ -444,6 +487,10 @@ async function ftsKeywordSearch(db: Database, query: string, limit: number): Pro
   // FTS5 query syntax: tokens separated by space = AND, OR between groups with OR keyword.
   const tokens = tokenize(query);
   if (tokens.length === 0) return [];
+  // Sanitize FTS5 tokens: each token is double-quoted so FTS5 treats it as a
+  // literal phrase. This neutralizes FTS5 operators (OR, NOT, NEAR, AND, *, ^).
+  // The tokenizer already strips non-alphanumeric chars, but we additionally
+  // escape double-quotes inside tokens for correctness.
   const ftsQuery = tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ');
 
   try {
@@ -540,9 +587,28 @@ export async function retrieveEntityChunks(
   return retrieveEntityChunksWithVector(query, queryVector, options);
 }
 
+function applyGraphRerank(
+  results: RetrievedEntityChunk[],
+  db: Database,
+  query: string,
+  intent: 'person_relation' | 'company_affiliation' | 'neutral',
+): RetrievedEntityChunk[] {
+  const predicates = detectRelationPredicates(query, intent);
+  const mentioned = inferReferencedEntitySlugs(db, query);
+
+  return results
+    .map((chunk) => {
+      let score = chunk.score ?? 0;
+      score *= chunkIntentMultiplier(chunk, intent);
+      score *= exactEntityMentionMultiplier(chunk, mentioned, intent, predicates);
+      return { ...chunk, score };
+    })
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+}
+
 export async function searchEntityChunks(
   query: string,
-  options: { limit?: number; keywordLimit?: number; vectorLimit?: number; db?: Database; expansion?: boolean; expansionLimit?: number } = {},
+  options: { limit?: number; keywordLimit?: number; vectorLimit?: number; db?: Database; expansion?: boolean; expansionLimit?: number; graphRerank?: boolean } = {},
 ): Promise<RetrievedEntityChunk[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
@@ -610,23 +676,19 @@ export async function searchEntityChunks(
     if (topicPriority >= 8) {
       score *= 1.2; // 20% boost for high-priority topics
     }
-    score *= chunkIntentMultiplier(chunk, intent);
     return { ...chunk, score };
   });
 
   results = cosineReScore(results, queryVector);
 
-  if (options.db) {
-    const linkedSlugs = getGraphLinkedSlugs(options.db, trimmed, intent);
-    if (linkedSlugs.size > 0) {
-      results = results
-        .map((chunk) => ({
-          ...chunk,
-          score: (chunk.score ?? 0) * (linkedSlugs.has(chunk.slug) ? 1.75 : 0.9),
-        }))
-        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    }
+  // Graph reranking: entity-intent and mention multipliers.
+  // Toggleable via options.graphRerank (default: true when db is provided).
+  const useGraphRerank = options.db !== undefined && (options.graphRerank ?? true);
+  if (useGraphRerank && options.db) {
+    results = applyGraphRerank(results, options.db, trimmed, intent);
+  }
 
+  if (options.db) {
     const counts = getBacklinkCounts(options.db, [...new Set(results.map((r) => r.slug))]);
     results = applyBacklinkBoost(results, counts);
   }
@@ -636,14 +698,19 @@ export async function searchEntityChunks(
 
 export async function retrieveEntityPages(
   query: string,
-  options: { limit?: number; chunkLimit?: number; snippetsPerPage?: number; db?: Database; expansion?: boolean; expansionLimit?: number } = {},
+  options: { limit?: number; chunkLimit?: number; snippetsPerPage?: number; db?: Database; expansion?: boolean; expansionLimit?: number; graphRerank?: boolean } = {},
 ): Promise<RetrievedEntityPage[]> {
   const pageLimit = options.limit ?? 5;
   const chunkLimit = options.chunkLimit ?? Math.max(pageLimit * 4, 8);
   const snippetsPerPage = options.snippetsPerPage ?? 2;
   const intent = detectQueryIntent(query);
+  const useGraphRerank = options.graphRerank ?? true;
 
-  const chunks = await searchEntityChunks(query, { limit: chunkLimit, db: options.db, expansion: options.expansion, expansionLimit: options.expansionLimit });
+  // Pass graphRerank through to chunk-level search so graph boosting is controlled
+  // from a single toggle. The old code applied graph boosts at BOTH chunk and page
+  // level, causing a compounding ~4.75x effective ratio. Now graph boosting happens
+  // only at chunk level via applyGraphRerank, which is toggleable.
+  const chunks = await searchEntityChunks(query, { limit: chunkLimit, db: options.db, expansion: options.expansion, expansionLimit: options.expansionLimit, graphRerank: useGraphRerank });
   if (chunks.length === 0) return [];
 
   const grouped = new Map<string, RetrievedEntityPage>();
@@ -681,7 +748,14 @@ export async function retrieveEntityPages(
     }
   });
 
-  return [...grouped.values()]
+  // NOTE: Page-level graph boost removed (Phase 0a fix).
+  // Graph reranking now happens only at chunk level via applyGraphRerank(),
+  // controlled by the graphRerank toggle. The old code applied graph boosts
+  // at both chunk and page level, causing a compounding ~4.75x effective ratio
+  // that masked retrieval quality problems by brute-forcing graph answers to the top.
+  let pages = [...grouped.values()];
+
+  return pages
     .sort((a, b) => {
       if (b.fusedScore !== a.fusedScore) return b.fusedScore - a.fusedScore;
       const aScore = typeof a.bestScore === 'number' ? a.bestScore : Number.POSITIVE_INFINITY;
