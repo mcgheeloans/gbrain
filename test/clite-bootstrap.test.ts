@@ -62,11 +62,11 @@ describe('C-lite bootstrap', () => {
     db.close();
   });
 
-  test('clite_meta has schema_version 2 and engine', () => {
+  test('clite_meta has schema_version 3 and engine', () => {
     const db = new Database(TEST_DB);
     const meta = db.query('SELECT key, value FROM clite_meta ORDER BY key').all() as { key: string; value: string }[];
     const map = Object.fromEntries(meta.map(r => [r.key, r.value]));
-    expect(map.schema_version).toBe('2');
+    expect(map.schema_version).toBe('3');
     expect(map.engine).toBe('clite-sqlite');
     db.close();
   });

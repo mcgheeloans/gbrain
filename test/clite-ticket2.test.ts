@@ -146,7 +146,7 @@ describe('triples', () => {
     upsertEntity(db, 'people/sarah-chen', 'person', 'Sarah Chen');
     expect(() =>
       insertTriple(db, { subjectSlug: 'people/sarah-chen', predicate: 'broken' })
-    ).toThrow('neither provided');
+    ).toThrow('must have either');
   });
 
   test('rejects triple with BOTH objectEntitySlug and objectLiteral', () => {
@@ -159,7 +159,7 @@ describe('triples', () => {
         objectEntitySlug: 'companies/acme-corp',
         objectLiteral: 'also a literal',
       })
-    ).toThrow('both provided');
+    ).toThrow('not both');
   });
 
   test('deduplicates on identical insert', () => {
