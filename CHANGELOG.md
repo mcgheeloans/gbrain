@@ -7,7 +7,7 @@ All notable changes to GBrain will be documented in this file.
 ## **Frontmatter becomes a graph. Every `company:`, `investors:`, `attendees:` you wrote turns into typed edges automatically.**
 ## **Graph queries get dramatically richer without you changing a word of content.**
 
-v0.13 teaches the knowledge graph to read your YAML frontmatter. The `company: Stripe` on a person page becomes a `works_at` edge. `investors: [Benchmark, Sequoia]` on a deal page becomes `invested_in` edges pointing to the deal. `attendees: [Pedro, Garry]` on a meeting page becomes `attended` edges. Direction respects subject-of-verb: `pedro-franceschi → meetings/2026-04-03` reads naturally because Pedro is the one who attended. `gbrain graph diana-hu --depth 2` goes from returning 7 nodes to 50+ on a real brain, with zero skill edits or frontmatter changes.
+v0.13 teaches the knowledge graph to read your YAML frontmatter. A `company: Acme` on a person page becomes a `works_at` edge. `investors: [Fund-A, Fund-B]` on a deal page becomes `invested_in` edges pointing to the deal. `attendees: [alice, charlie]` on a meeting page becomes `attended` edges. Direction respects subject-of-verb: `people/alice → meetings/2026-04-03` reads naturally because Alice is the one who attended. `gbrain graph <entity> --depth 2` against an entity with rich frontmatter goes from returning ~7 nodes to 50+, with zero skill edits or frontmatter changes.
 
 Everything else stays the same. Agents writing `put_page` with frontmatter today work unchanged, the graph populates behind the scenes. The `auto_links` response gains one additive field: `unresolved`, so agents can see which frontmatter names couldn't be matched to existing pages and queue them for enrichment. No breaking changes to any public API.
 
@@ -18,14 +18,14 @@ Benchmarked against a 46K-page production brain with ~15K frontmatter references
 | Metric | Before (v0.12) | After (v0.13) | Δ |
 |--------|----------------|----------------|---|
 | Graph edges total | 28K | 43K | +54% |
-| `gbrain graph diana-hu --depth 2` node count | 7 | 52 | +643% |
+| `gbrain graph <hub-entity> --depth 2` node count | 7 | 52 | +643% |
 | 4-hop queries (person → company → deal → investor) | fail | return aggregate | unlocked |
 | Migration wall-clock on 46K pages | N/A | 3min | one-time |
 | LLM API calls during migration | N/A | 0 | deterministic |
 | Embedding API calls during migration | N/A | 0 | zero cost |
 
-| Frontmatter field | Edges produced on Wintermute (46K pages) |
-|-------------------|------------------------------------------|
+| Frontmatter field | Edges produced on 46K-page test brain |
+|-------------------|----------------------------------------|
 | `company`, `companies` (person pages) | ~9,800 |
 | `key_people` (company pages) | ~1,400 |
 | `investors` (deal + company pages) | ~2,100 |
@@ -34,11 +34,11 @@ Benchmarked against a 46K-page production brain with ~15K frontmatter references
 | `sources`, `source` (any page) | ~1,200 |
 | `related`, `see_also` (any page) | ~400 |
 
-The Diana Hu 4-hop query that motivated this release: "top investors in Diana's YC startups." Pre-v0.13: impossible without manual graph edits. Post-v0.13: `gbrain graph diana-hu --depth 2 --type yc_partner,invested_in` returns Benchmark, Sequoia, a16z with frequencies. Works because Diana's `companies:` field points to her portfolio, those companies' `partner:` field points back at her, and their `investors:` field resolves to the fund pages.
+The 4-hop query pattern that motivated this release: "top investors in an advisor's portfolio." Pre-v0.13: impossible without manual graph edits. Post-v0.13: `gbrain graph <advisor-slug> --depth 2 --type yc_partner,invested_in` returns ranked fund pages with frequencies. Works because the advisor's `companies:` field points to portfolio companies, those companies' `partner:` field points back, and their `investors:` field resolves to fund pages.
 
 ### What this means for OpenClaw agents
 
-If you maintain a Wintermute-style agent that uses gbrain as its persistent memory, v0.13 is the easiest upgrade since v0.7. Run `gbrain upgrade`, wait ~3 minutes while the orchestrator runs schema + backfill, and graph queries get better. No skill edits required for the majority of skills. Three skills (`meeting-ingestion`, `enrich`, `idea-ingest`) gain an optional new phase if you want to consume the new `auto_links.unresolved` field, see `docs/UPGRADING_DOWNSTREAM_AGENTS.md` for the exact diffs.
+If you maintain an agent fork that uses gbrain as its persistent memory, v0.13 is the easiest upgrade since v0.7. Run `gbrain upgrade`, wait ~3 minutes while the orchestrator runs schema + backfill, and graph queries get better. No skill edits required for the majority of skills. Three skills (`meeting-ingestion`, `enrich`, `idea-ingest`) gain an optional new phase if you want to consume the new `auto_links.unresolved` field, see `docs/UPGRADING_DOWNSTREAM_AGENTS.md` for the exact diffs.
 
 ## To take advantage of v0.13
 
@@ -51,7 +51,7 @@ If you maintain a Wintermute-style agent that uses gbrain as its persistent memo
 2. **Your agent reads `skills/migrations/v0.13.0.md` the next time you interact with it.** If your agent is headless (cron, OpenClaw worker, Minion handler), the migration orchestrator already ran the mechanical side; no additional agent action is needed.
 3. **Verify the outcome:**
    ```bash
-   gbrain graph diana-hu --depth 2   # or any entity with frontmatter refs
+   gbrain graph <some-entity> --depth 2   # any entity with frontmatter refs
    gbrain stats                       # link_count should reflect ~15-20K new frontmatter edges
    ```
 4. **If any step fails or the numbers look wrong,** please file an issue:
@@ -60,7 +60,7 @@ If you maintain a Wintermute-style agent that uses gbrain as its persistent memo
    - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
    - which step broke
 
-   This feedback loop is how Garry finds fragile upgrade paths. Thank you.
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
 
 ### Itemized changes
 

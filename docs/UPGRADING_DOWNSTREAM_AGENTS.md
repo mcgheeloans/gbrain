@@ -1,7 +1,7 @@
 # Upgrading Downstream Agents
 
-GBrain ships skills in `skills/`. Downstream agents (Wintermute, OpenClaw deployments,
-custom agent forks) often **copy** these skill files into their own workspace and
+GBrain ships skills in `skills/`. Downstream agents (custom OpenClaw deployments,
+agent forks of any kind) often **copy** these skill files into their own workspace and
 diverge over time — adding agent-specific phases, removing irrelevant ones, tightening
 language. Once that happens, gbrain can't push updates to those forks. The agent has
 to apply the diffs by hand.
@@ -13,7 +13,7 @@ Cross-reference against your fork's local skill files.
 
 `gbrain upgrade` ships the new binary. `gbrain post-upgrade [--execute --yes]` runs
 the schema migrations and backfills the data. But the **skill files themselves**
-that tell the agent how to behave — those are user-owned. If your `~/git/wintermute/workspace/skills/brain-ops/SKILL.md`
+that tell the agent how to behave — those are user-owned. If your `~/git/<your-agent>/workspace/skills/brain-ops/SKILL.md`
 says `# Based on gbrain v0.10.0` at the top, it doesn't know about v0.12.0 features.
 
 The agent will keep manually calling `gbrain link` after every `put_page` (now redundant —
@@ -22,7 +22,7 @@ not know to backfill the structured timeline.
 
 ## How to apply
 
-1. Identify your forked skill files. For Wintermute: `~/git/wintermute/workspace/skills/`.
+1. Identify your forked skill files. Typically at `~/git/<your-agent>/workspace/skills/` or wherever your agent's skill directory lives.
 2. For each skill listed below, find the matching phase/section in your fork.
 3. Apply the diff (paste the new block in the indicated location).
 4. Update the version banner at the top of your fork (`# Based on gbrain v0.12.0`).
@@ -155,7 +155,7 @@ Timeline entries still need explicit `gbrain timeline-add` calls.
 
 1. **Bump the version banner** at the top of each forked file:
    ```
-   # Based on gbrain v0.12.0 skills/<skill-name>, extended with Wintermute-specific config
+   # Based on gbrain v0.12.0 skills/<skill-name>, extended with <your-agent>-specific config
    ```
 
 2. **Run the v0.12.0 backfill** (this populates the graph for your existing brain):
@@ -281,7 +281,7 @@ If any `put_page` response includes `auto_links.unresolved` entries, the enrichm
 tier should pick up those (field, name) pairs and try to create the missing entity
 pages. Example flow:
 
-1. signal-detector captures a meeting with `attendees: [Pedro Franceschi, Unknown Person]`
+1. signal-detector captures a meeting with `attendees: [Alice Known, Unknown Person]`
 2. put_page returns `auto_links.unresolved = [{field: 'attendees', name: 'Unknown Person'}]`
 3. enrichment tier consumes `Unknown Person` → web search → creates `people/unknown-person.md`
 4. The next put_page (or a backfill run) wires up the `attended` edge automatically
