@@ -38,6 +38,7 @@ export const FRONTMATTER_LINK_MAP: Record<string, FieldMapping> = {
   company:      { predicate: 'works_at',        direction: 'outgoing', dirHint: 'companies', multi: false },
   companies:    { predicate: 'works_at',        direction: 'outgoing', dirHint: 'companies', multi: true },
   employer:     { predicate: 'works_at',        direction: 'outgoing', dirHint: 'companies', multi: false },
+  founded:      { predicate: 'founded',         direction: 'outgoing', dirHint: 'companies', multi: false },
   advisor_to:   { predicate: 'advisor_to',      direction: 'outgoing', dirHint: 'companies', multi: true },
   reports_to:   { predicate: 'reports_to',      direction: 'outgoing', dirHint: 'people',    multi: false },
 
@@ -45,7 +46,10 @@ export const FRONTMATTER_LINK_MAP: Record<string, FieldMapping> = {
   key_people:   { predicate: 'works_at',        direction: 'incoming', dirHint: 'people',    multi: true },
   founders:     { predicate: 'founded',         direction: 'incoming', dirHint: 'people',    multi: true },
   investors:    { predicate: 'invested_in',     direction: 'incoming', dirHint: 'people',    multi: true },
-  partner:      { predicate: 'partner_of',      direction: 'incoming', dirHint: 'companies', multi: false },
+  partner:      { predicate: 'yc_partner',     direction: 'incoming', dirHint: 'companies', multi: false },
+
+  // Deal pages
+  lead:         { predicate: 'led_round',       direction: 'incoming', dirHint: 'people',    multi: true },
 
   // Meeting pages
   attendees:    { predicate: 'attended',         direction: 'incoming', dirHint: 'people',    multi: true },
@@ -64,6 +68,7 @@ export interface ResolvedLink {
   predicate: string;
   objectSlug: string;
   originField: string;
+  originSlug: string; // page slug that created this edge (for frontmatter reconciliation)
 }
 
 export interface UnresolvedName {
@@ -164,6 +169,7 @@ export function extractFrontmatterLinks(
           predicate: mapping.predicate,
           objectSlug,
           originField: field,
+          originSlug: pageSlug,
         });
       } else {
         // Incoming: the referenced entity is the subject
@@ -172,6 +178,7 @@ export function extractFrontmatterLinks(
           predicate: mapping.predicate,
           objectSlug: pageSlug,
           originField: field,
+          originSlug: pageSlug,
         });
       }
     }

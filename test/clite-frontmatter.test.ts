@@ -134,4 +134,59 @@ describe('frontmatter-links', () => {
     expect(resolved.length).toBe(0);
     expect(unresolved.length).toBe(0);
   });
+
+  test('extracts founded from person page (outgoing)', () => {
+    db.exec(`INSERT INTO entities (slug, type, title) VALUES ('people/jane', 'person', 'Jane Doe')`);
+    db.exec(`INSERT INTO entities (slug, type, title) VALUES ('companies/acme', 'company', 'Acme Corp')`);
+
+    // founded: outgoing — jane (subject) founded acme (object)
+    const { resolved, unresolved } = extractFrontmatterLinks(
+      'people/jane',
+      { founded: 'Acme Corp' },
+      db,
+    );
+
+    expect(resolved.length).toBe(1);
+    expect(resolved[0].subjectSlug).toBe('people/jane');
+    expect(resolved[0].predicate).toBe('founded');
+    expect(resolved[0].objectSlug).toBe('companies/acme');
+    expect(resolved[0].originSlug).toBe('people/jane');
+    expect(unresolved.length).toBe(0);
+  });
+
+  test('extracts led_round from deal page (incoming)', () => {
+    db.exec(`INSERT INTO entities (slug, type, title) VALUES ('deals/acme-seed', 'deal', 'Acme Seed Round')`);
+    db.exec(`INSERT INTO entities (slug, type, title) VALUES ('people/bob', 'person', 'Bob Wilson')`);
+
+    // lead: incoming — bob (subject) led_round deals/acme-seed (object)
+    const { resolved, unresolved } = extractFrontmatterLinks(
+      'deals/acme-seed',
+      { lead: 'Bob Wilson' },
+      db,
+    );
+
+    expect(resolved.length).toBe(1);
+    expect(resolved[0].subjectSlug).toBe('people/bob');
+    expect(resolved[0].predicate).toBe('led_round');
+    expect(resolved[0].objectSlug).toBe('deals/acme-seed');
+    expect(resolved[0].originSlug).toBe('deals/acme-seed');
+    expect(unresolved.length).toBe(0);
+  });
+
+  test('partner maps to yc_partner predicate', () => {
+    db.exec(`INSERT INTO entities (slug, type, title) VALUES ('companies/acme', 'company', 'Acme Corp')`);
+    db.exec(`INSERT INTO entities (slug, type, title) VALUES ('people/sarah', 'person', 'Sarah Chen')`);
+
+    // partner: incoming — sarah (subject) yc_partner acme (object)
+    const { resolved } = extractFrontmatterLinks(
+      'companies/acme',
+      { partner: 'Sarah Chen' },
+      db,
+    );
+
+    expect(resolved.length).toBe(1);
+    expect(resolved[0].predicate).toBe('yc_partner');
+    expect(resolved[0].subjectSlug).toBe('people/sarah');
+    expect(resolved[0].objectSlug).toBe('companies/acme');
+  });
 });
