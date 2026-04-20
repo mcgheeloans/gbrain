@@ -49,6 +49,27 @@ export type { BridgeInput, BridgeResult, BridgeOptions, BridgeEntityInput, Bridg
 export { getStaleProjections, recomputeFreshness } from './freshness.ts';
 export type { ProjectionStaleness, FreshnessRow } from './freshness.ts';
 
+// ── Maintenance ───────────────────────────────────────────────────────
+
+export {
+  runAllMaintenance,
+  markStaleProjections,
+  findOrphanEntities,
+  checkTripleConsistency,
+  reportUnresolvedLinks,
+} from './maintenance.ts';
+export type { MaintenanceResult } from './maintenance.ts';
+
+// ── Graph queries ──────────────────────────────────────────────────────
+
+export {
+  traverseGraph,
+  findPeopleLinkedToCompany,
+  findCompaniesLinkedToPerson,
+  parseTemporalFilter,
+} from './graph-query.ts';
+export type { GraphQuery, GraphTraversalResult, TemporalFilter } from './graph-query.ts';
+
 // ── Bootstrap ─────────────────────────────────────────────────────────
 
 export { bootstrap } from './bootstrap.ts';
