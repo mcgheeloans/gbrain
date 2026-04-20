@@ -664,8 +664,44 @@ and projection status are solid.
 
 ### Phase 7 (later): Minions decision
 
-Whether to keep upstream minions on engine tables or delegate to OpenClaw-native
-job infrastructure. Only after core memory/query architecture is proven.
+**Decision made (2026-04-20):** C-lite delegates job scheduling to OpenClaw's
+native cron/heartbeat infrastructure. Maintenance functions are exposed as
+idempotent callables (see `src/clite/maintenance.ts`). No custom job queue.
+
+
+**Future: SQLite-based Minions system**
+
+When C-lite matures to the point of needing durable, steerable background
+agents, the plan is to build a SQLite-backed Minions system that mirrors the
+gbrain Postgres contract. This is NOT the current scope — it waits until the
+core memory/query architecture is proven and the maintenance layer is stable.
+
+The target contract (derived from upstream `minion-orchestrator/SKILL.md`):
+
+
+| Feature | Implementation |
+|---------|----------------|
+| Durable job queue | SQLite WAL-mode, survives gateway restarts |
+| Job lifecycle | submit → active → completed/failed/paused/cancelled |
+| Parent-child DAGs | `parent_job_id` FK, status propagates to parent |
+| Pause / resume | Clears lock, preserves state in DB |
+| Inbox steering | `job_messages` table, agent reads on each iteration |
+| Progress tracking | Structured step count, last tool, message |
+| Token accounting | `tokens_input`, `tokens_output`, `tokens_cache_read` |
+| Session transcripts | `job_transcripts` table, JSONL per job |
+| Replay | Re-run completed job with same or modified params |
+| MCP tools | `submit_job`, `get_job`, `list_jobs`, `pause_job`, `resume_job`, `cancel_job`, `send_job_message`, `get_job_progress`, `get_job_stats` |
+
+
+**Key design constraints:**
+- No `pg_notify` / LISTEN/NOTIFY equivalent in SQLite — use polling or
+  simple file-based notification markers instead
+- Advisory locks not available in SQLite — use `INSERT ... ON CONFLICT`
+  with unique job IDs for claiming, similar to how LanceDB uses SQLite
+- Jobs are submitted via C-lite's own session/agent, not an external Postgres
+- Integrates with OpenClaw's existing `sessions_spawn` for actual agent execution
+
+Only after core memory/query architecture is proven and maintenance layer is stable.
 
 ---
 
