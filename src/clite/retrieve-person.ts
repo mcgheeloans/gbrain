@@ -13,8 +13,10 @@ import { JinaEmbedder } from './embedder.ts';
 import { getSharedTable } from './lance-store.ts';
 import { parseMetadata, chunkKey, dedupResults, tokenize } from './search-dedup.ts';
 import { cosineReScore, keywordScore, getBacklinkCounts, applyBacklinkBoost, normalizeChunkScores, COMPILED_TRUTH_BOOST } from './search-scoring.ts';
-import { detectQueryIntent, pageIntentMultiplier } from './query-intent.ts';
+import { detectQueryIntent, pageIntentMultiplier, inferReferencedEntitySlugs } from './query-intent.ts';
+import type { QueryIntent } from './query-intent.ts';
 import { applyGraphRerank } from './graph-rerank.ts';
+import { parseTemporalFilter, findPeopleLinkedToCompany, findCompaniesLinkedToPerson, traverseGraph } from './graph-query.ts';
 
 const SCOPE = 'gbrain:entities';
 const RRF_K = 60;
@@ -277,6 +279,37 @@ export async function searchEntityChunks(
   const useGraphRerank = options.db !== undefined && (options.graphRerank ?? true);
   if (useGraphRerank && options.db) {
     results = applyGraphRerank(results, options.db, trimmed, intent);
+  }
+
+  // Temporal and aggregate intent: use graph traversal to boost entities
+  // that match the temporal filter and graph structure.
+  if (options.db && (intent === 'temporal' || intent === 'aggregate' || intent === 'cross_type')) {
+    const temporalFilter = intent === 'temporal' ? parseTemporalFilter(trimmed) : undefined;
+    const mentionedEntities = inferReferencedEntitySlugs(options.db, trimmed);
+
+    if (mentionedEntities.length > 0) {
+      const graphSlugs = new Set<string>();
+
+      for (const entity of mentionedEntities) {
+        if (entity.type === 'company') {
+          const people = findPeopleLinkedToCompany(options.db, entity.slug, temporalFilter);
+          for (const p of people) graphSlugs.add(p.slug);
+        } else if (entity.type === 'person') {
+          const companies = findCompaniesLinkedToPerson(options.db, entity.slug, temporalFilter);
+          for (const c of companies) graphSlugs.add(c.slug);
+        }
+      }
+
+      // Boost graph-linked entities
+      if (graphSlugs.size > 0) {
+        results = results.map(chunk => {
+          if (graphSlugs.has(chunk.slug)) {
+            return { ...chunk, score: (chunk.score ?? 0) * 1.5 };
+          }
+          return chunk;
+        });
+      }
+    }
   }
 
   if (options.db) {

@@ -1,11 +1,22 @@
 import type { Database } from 'bun:sqlite';
 import type { RetrievedEntityChunk } from './retrieve-person.ts';
 
-export function detectQueryIntent(query: string): 'person_relation' | 'company_affiliation' | 'neutral' {
+export type QueryIntent = 'person_relation' | 'company_affiliation' | 'temporal' | 'aggregate' | 'cross_type' | 'neutral';
+
+export function detectQueryIntent(query: string): QueryIntent {
   const q = query.toLowerCase();
+
+  // Temporal queries first (they often overlap with other intents)
+  const hasTemporal = /\b(in \d{4}|since |between \d{4}|last year|this year|currently|recently|used to|formerly|before|after|until)\b/.test(q);
+  const asksForAggregate = /\b(how many|count|total|number of|list all|show all|all the)\b/.test(q);
+  const asksForCrossType = /\b(both|and|related|connected|between|network|graph)\b/.test(q);
+
   const asksForPerson = /\b(who|founder|founded|invested|investor|advisor|employee|employees|works on|team)\b/.test(q);
   const asksForCompany = /\b(company|employer|organization|where does .* work|where .* works)\b/.test(q);
 
+  if (hasTemporal) return 'temporal';
+  if (asksForAggregate) return 'aggregate';
+  if (asksForCrossType && asksForPerson && asksForCompany) return 'cross_type';
   if (asksForCompany) return 'company_affiliation';
   if (asksForPerson) return 'person_relation';
   return 'neutral';
